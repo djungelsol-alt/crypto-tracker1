@@ -1,14 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function App() {
-  const [step, setStep] = useState(1);
-  const [startDate, setStartDate] = useState('');
-  const [oldHourlySalary, setOldHourlySalary] = useState('');
-  const [dailyData, setDailyData] = useState(Array(365).fill(null).map(() => ({ 
-    profit: 0, 
-    hours: 0,
-    trades: [] 
-  })));
+  const [step, setStep] = useState(() => {
+    const saved = localStorage.getItem('cryptoTracker');
+    return saved ? JSON.parse(saved).step || 1 : 1;
+  });
+  const [startDate, setStartDate] = useState(() => {
+    const saved = localStorage.getItem('cryptoTracker');
+    return saved ? JSON.parse(saved).startDate || '' : '';
+  });
+  const [oldHourlySalary, setOldHourlySalary] = useState(() => {
+    const saved = localStorage.getItem('cryptoTracker');
+    return saved ? JSON.parse(saved).oldHourlySalary || '' : '';
+  });
+  const [dailyData, setDailyData] = useState(() => {
+    const saved = localStorage.getItem('cryptoTracker');
+    return saved ? JSON.parse(saved).dailyData || Array(365).fill(null).map(() => ({ profit: 0, hours: 0, trades: [] })) : Array(365).fill(null).map(() => ({ profit: 0, hours: 0, trades: [] }));
+  });
   const [editingDay, setEditingDay] = useState(null);
   const [viewMode, setViewMode] = useState('day');
   const [tempHours, setTempHours] = useState('');
@@ -22,6 +30,16 @@ export default function App() {
     positionSize: '',
     date: ''
   });
+
+  // Save to localStorage whenever data changes
+  useEffect(() => {
+    localStorage.setItem('cryptoTracker', JSON.stringify({
+      step,
+      startDate,
+      oldHourlySalary,
+      dailyData
+    }));
+  }, [step, startDate, oldHourlySalary, dailyData]);
 
   const addTrade = () => {
     if (!newTrade.entry || !newTrade.exit || !newTrade.maxPrice || !newTrade.minPrice || !newTrade.positionSize) return;
@@ -495,10 +513,13 @@ export default function App() {
   };
 
   const handleReset = () => {
-    setStep(1);
-    setStartDate('');
-    setOldHourlySalary('');
-    setDailyData(Array(365).fill(null).map(() => ({ profit: 0, hours: 0, trades: [] })));
+    if (window.confirm('Are you sure? This will delete all your data.')) {
+      localStorage.removeItem('cryptoTracker');
+      setStep(1);
+      setStartDate('');
+      setOldHourlySalary('');
+      setDailyData(Array(365).fill(null).map(() => ({ profit: 0, hours: 0, trades: [] })));
+    }
   };
 
   return (
