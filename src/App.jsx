@@ -80,6 +80,52 @@ export default function App() {
     return `${diffDays}d ${diffHours % 24}h`;
   };
 
+  const calculateOldJobStats = () => {
+    const totalProfit = getTotalProfit();
+    const totalHours = dailyData.reduce((sum, day) => sum + day.hours, 0);
+    const profitableDays = dailyData.filter(day => day.profit > 0).length;
+    const losingDays = dailyData.filter(day => day.profit < 0).length;
+    const daysOver1k = dailyData.filter(day => day.profit > 1000).length;
+    
+    const avgDailyProfit = totalProfit / 365;
+    const effectiveHourlyRate = totalHours > 0 ? totalProfit / totalHours : 0;
+    
+    const oldYearlyIncome = parseFloat(oldHourlySalary) * 40 * 52;
+    
+    const daysWorked = dailyData.filter(day => day.hours > 0).length;
+    const avgHoursPerDay = daysWorked > 0 ? totalHours / daysWorked : 0;
+    const hoursPerDayForProjection = Math.max(8, avgHoursPerDay);
+    
+    const tradingAnnualProjection = effectiveHourlyRate * hoursPerDayForProjection * 365;
+    
+    const profitNeeded = oldYearlyIncome - totalProfit;
+    const dailyEarningsAtCurrentRate = effectiveHourlyRate * hoursPerDayForProjection;
+    const daysToSurpassOldJob = dailyEarningsAtCurrentRate > 0 
+      ? Math.ceil(profitNeeded / dailyEarningsAtCurrentRate) 
+      : Infinity;
+
+    const salaryComparison = parseFloat(oldHourlySalary) > 0 
+      ? ((effectiveHourlyRate / parseFloat(oldHourlySalary)) * 100 - 100).toFixed(1)
+      : 0;
+
+    return {
+      totalProfit,
+      totalHours,
+      profitableDays,
+      losingDays,
+      daysOver1k,
+      avgDailyProfit,
+      effectiveHourlyRate,
+      oldYearlyIncome,
+      daysWorked,
+      avgHoursPerDay,
+      hoursPerDayForProjection,
+      tradingAnnualProjection,
+      daysToSurpassOldJob,
+      salaryComparison
+    };
+  };
+
   const getAdvancedStats = () => {
     const allTrades = getAllTrades();
     if (allTrades.length === 0) return null;
@@ -94,6 +140,21 @@ export default function App() {
     
     const avgWinPercent = winners.length > 0 ? winners.reduce((sum, t) => sum + t.actualProfitPercent, 0) / winners.length : 0;
     const avgLossPercent = losers.length > 0 ? Math.abs(losers.reduce((sum, t) => sum + t.actualProfitPercent, 0) / losers.length) : 0;
+
+    // Money left on table
+    const totalMissedProfit = allTrades.reduce((sum, t) => sum + (t.missedProfit || 0), 0);
+    const totalPotentialProfit = allTrades.reduce((sum, t) => sum + (t.potentialProfit || 0), 0);
+    const missedProfitPercent = totalPotentialProfit > 0 ? (totalMissedProfit / totalPotentialProfit) * 100 : 0;
+    
+    const avgPotentialProfitPercent = allTrades.reduce((sum, t) => sum + (t.potentialProfitPercent || 0), 0) / allTrades.length;
+    const optimalTakeProfitPercent = avgPotentialProfitPercent * 0.85;
+
+    // Stop loss analysis
+    const losingTrades = allTrades.filter(t => t.actualProfit < 0);
+    const avgMaxDrawdown = losingTrades.length > 0 
+      ? losingTrades.reduce((sum, t) => sum + Math.abs(t.maxDrawdown || 0), 0) / losingTrades.length 
+      : 0;
+    const recommendedStopLoss = Math.min(avgMaxDrawdown * 0.5, 15);
     
     // Hold times
     const tradesWithHoldTime = allTrades.filter(t => t.openDate && t.closeDate);
@@ -113,12 +174,8 @@ export default function App() {
       const winHoldTimes = holdTimes.filter(h => h.profit > 0);
       const lossHoldTimes = holdTimes.filter(h => h.profit < 0);
       
-      if (winHoldTimes.length > 0) {
-        avgWinHoldTimeMs = winHoldTimes.reduce((sum, h) => sum + h.ms, 0) / winHoldTimes.length;
-      }
-      if (lossHoldTimes.length > 0) {
-        avgLossHoldTimeMs = lossHoldTimes.reduce((sum, h) => sum + h.ms, 0) / lossHoldTimes.length;
-      }
+      if (winHoldTimes.length > 0) avgWinHoldTimeMs = winHoldTimes.reduce((sum, h) => sum + h.ms, 0) / winHoldTimes.length;
+      if (lossHoldTimes.length > 0) avgLossHoldTimeMs = lossHoldTimes.reduce((sum, h) => sum + h.ms, 0) / lossHoldTimes.length;
     }
 
     const formatMs = (ms) => {
@@ -131,11 +188,10 @@ export default function App() {
       return `${days}d ${hours % 24}h`;
     };
 
-    // Largest win/loss
     const largestWin = winners.length > 0 ? Math.max(...winners.map(t => t.actualProfit)) : 0;
     const largestLoss = losers.length > 0 ? Math.min(...losers.map(t => t.actualProfit)) : 0;
 
-    // Streak calculation
+    // Streaks
     let currentStreak = 0;
     let maxWinStreak = 0;
     let maxLossStreak = 0;
@@ -154,18 +210,13 @@ export default function App() {
       }
     });
 
-    // Current streak
     for (let i = allTrades.length - 1; i >= 0; i--) {
       if (i === allTrades.length - 1) {
         currentStreak = allTrades[i].actualProfit > 0 ? 1 : -1;
       } else {
-        if (allTrades[i].actualProfit > 0 && currentStreak > 0) {
-          currentStreak++;
-        } else if (allTrades[i].actualProfit < 0 && currentStreak < 0) {
-          currentStreak--;
-        } else {
-          break;
-        }
+        if (allTrades[i].actualProfit > 0 && currentStreak > 0) currentStreak++;
+        else if (allTrades[i].actualProfit < 0 && currentStreak < 0) currentStreak--;
+        else break;
       }
     }
 
@@ -202,7 +253,12 @@ export default function App() {
       calmWinRate,
       fomoCount: fomoTrades.length,
       revengeCount: revengeTrades.length,
-      calmCount: calmTrades.length
+      calmCount: calmTrades.length,
+      totalMissedProfit,
+      missedProfitPercent,
+      optimalTakeProfitPercent,
+      avgMaxDrawdown,
+      recommendedStopLoss
     };
   };
 
@@ -305,6 +361,18 @@ export default function App() {
     }
   };
 
+  const getMotivationalQuote = (stats) => {
+    if (stats.avgDailyProfit > 1000) {
+      return { quote: "You're making over $1,000 per day. Let that sink in.", subtext: "Most people work a full week to make what you're averaging in a single day." };
+    } else if (stats.profitableDays > stats.losingDays) {
+      return { quote: "It's not a race. You're profitable, and that means you're on track.", subtext: "More winning days than losing days. You're building something sustainable." };
+    } else if (stats.totalProfit > 0) {
+      return { quote: "Progress isn't linear. You're still net positive.", subtext: "Every profitable trader has rough patches. What matters is the long-term trend." };
+    } else {
+      return { quote: "This is part of the journey. Every master was once a beginner.", subtext: "Focus on learning, refining your strategy, and protecting your capital." };
+    }
+  };
+
   const formatCurrency = (num) => {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
   };
@@ -380,105 +448,221 @@ export default function App() {
 
   const renderStats = () => {
     const stats = getAdvancedStats();
-    if (!stats) return null;
+    const jobStats = calculateOldJobStats();
+    const quote = getMotivationalQuote(jobStats);
 
     return (
       <div className="mt-8 space-y-6">
-        {/* Main Stats */}
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">📊 Trading Statistics</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-gray-50 p-4 rounded text-center">
-              <div className="text-2xl font-bold text-gray-800">{stats.totalTrades}</div>
-              <div className="text-xs text-gray-600">Total Trades</div>
-            </div>
-            <div className="bg-green-50 p-4 rounded text-center">
-              <div className="text-2xl font-bold text-green-600">{stats.winRate.toFixed(1)}%</div>
-              <div className="text-xs text-gray-600">Win Rate</div>
-            </div>
-            <div className="bg-blue-50 p-4 rounded text-center">
-              <div className="text-2xl font-bold text-blue-600">{stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)}</div>
-              <div className="text-xs text-gray-600">Profit Factor</div>
-            </div>
-            <div className="bg-purple-50 p-4 rounded text-center">
-              <div className={`text-2xl font-bold ${stats.currentStreak > 0 ? 'text-green-600' : stats.currentStreak < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                {stats.currentStreak > 0 ? `+${stats.currentStreak}` : stats.currentStreak}
-              </div>
-              <div className="text-xs text-gray-600">Current Streak</div>
-            </div>
-          </div>
+        {/* Motivational Quote */}
+        <div className="bg-gradient-to-br from-blue-500 to-purple-600 p-8 rounded-lg shadow-lg text-white">
+          <div className="text-2xl font-bold mb-2">{quote.quote}</div>
+          <div className="text-blue-100 text-sm">{quote.subtext}</div>
         </div>
 
-        {/* Win/Loss Analysis */}
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">🎯 Win/Loss Analysis</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-green-50 p-4 rounded">
-              <div className="text-lg font-bold text-green-600">{stats.winners} Wins</div>
-              <div className="text-sm text-gray-600">Avg Win: {formatCurrency(stats.avgWin)}</div>
-              <div className="text-sm text-gray-600">Avg Win %: {stats.avgWinPercent.toFixed(2)}%</div>
-              <div className="text-sm text-gray-600">Largest: {formatCurrency(stats.largestWin)}</div>
-              <div className="text-sm text-gray-600">Max Streak: {stats.maxWinStreak}</div>
-            </div>
-            <div className="bg-red-50 p-4 rounded">
-              <div className="text-lg font-bold text-red-600">{stats.losers} Losses</div>
-              <div className="text-sm text-gray-600">Avg Loss: {formatCurrency(stats.avgLoss)}</div>
-              <div className="text-sm text-gray-600">Avg Loss %: {stats.avgLossPercent.toFixed(2)}%</div>
-              <div className="text-sm text-gray-600">Largest: {formatCurrency(Math.abs(stats.largestLoss))}</div>
-              <div className="text-sm text-gray-600">Max Streak: {stats.maxLossStreak}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Hold Time Analysis */}
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">⏱️ Hold Time Analysis</h2>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="bg-gray-50 p-4 rounded text-center">
-              <div className="text-2xl font-bold text-gray-800">{stats.avgHoldTime}</div>
-              <div className="text-xs text-gray-600">Avg Hold Time</div>
-            </div>
-            <div className="bg-green-50 p-4 rounded text-center">
-              <div className="text-2xl font-bold text-green-600">{stats.avgWinHoldTime}</div>
-              <div className="text-xs text-gray-600">Avg Winner Hold</div>
-            </div>
-            <div className="bg-red-50 p-4 rounded text-center">
-              <div className="text-2xl font-bold text-red-600">{stats.avgLossHoldTime}</div>
-              <div className="text-xs text-gray-600">Avg Loser Hold</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Emotion Analysis */}
-        {(stats.fomoCount > 0 || stats.revengeCount > 0 || stats.calmCount > 0) && (
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-xl font-semibold mb-4 text-gray-800">🧠 Emotion Analysis</h2>
-            <div className="grid grid-cols-3 gap-4">
-              {stats.calmCount > 0 && (
+        {stats && (
+          <>
+            {/* Main Stats */}
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-xl font-semibold mb-4 text-gray-800">📊 Trading Statistics</h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-gray-50 p-4 rounded text-center">
+                  <div className="text-2xl font-bold text-gray-800">{stats.totalTrades}</div>
+                  <div className="text-xs text-gray-600">Total Trades</div>
+                </div>
+                <div className="bg-green-50 p-4 rounded text-center">
+                  <div className="text-2xl font-bold text-green-600">{stats.winRate.toFixed(1)}%</div>
+                  <div className="text-xs text-gray-600">Win Rate</div>
+                </div>
                 <div className="bg-blue-50 p-4 rounded text-center">
-                  <div className="text-2xl font-bold text-blue-600">{stats.calmWinRate}%</div>
-                  <div className="text-xs text-gray-600">Calm Win Rate</div>
-                  <div className="text-xs text-gray-400">({stats.calmCount} trades)</div>
+                  <div className="text-2xl font-bold text-blue-600">{stats.profitFactor === Infinity ? '∞' : stats.profitFactor.toFixed(2)}</div>
+                  <div className="text-xs text-gray-600">Profit Factor</div>
                 </div>
-              )}
-              {stats.fomoCount > 0 && (
-                <div className="bg-yellow-50 p-4 rounded text-center">
-                  <div className="text-2xl font-bold text-yellow-600">{stats.fomoWinRate}%</div>
-                  <div className="text-xs text-gray-600">FOMO Win Rate</div>
-                  <div className="text-xs text-gray-400">({stats.fomoCount} trades)</div>
+                <div className="bg-purple-50 p-4 rounded text-center">
+                  <div className={`text-2xl font-bold ${stats.currentStreak > 0 ? 'text-green-600' : stats.currentStreak < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                    {stats.currentStreak > 0 ? `+${stats.currentStreak}` : stats.currentStreak}
+                  </div>
+                  <div className="text-xs text-gray-600">Current Streak</div>
                 </div>
-              )}
-              {stats.revengeCount > 0 && (
-                <div className="bg-red-50 p-4 rounded text-center">
-                  <div className="text-2xl font-bold text-red-600">{stats.revengeWinRate}%</div>
-                  <div className="text-xs text-gray-600">Revenge Win Rate</div>
-                  <div className="text-xs text-gray-400">({stats.revengeCount} trades)</div>
-                </div>
-              )}
+              </div>
             </div>
-            <p className="text-xs text-gray-500 mt-3">💡 Track your emotions to see which mindset gives you the best results.</p>
-          </div>
+
+            {/* Win/Loss Analysis */}
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-xl font-semibold mb-4 text-gray-800">🎯 Win/Loss Analysis</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-green-50 p-4 rounded">
+                  <div className="text-lg font-bold text-green-600">{stats.winners} Wins</div>
+                  <div className="text-sm text-gray-600">Avg Win: {formatCurrency(stats.avgWin)}</div>
+                  <div className="text-sm text-gray-600">Avg Win %: {stats.avgWinPercent.toFixed(2)}%</div>
+                  <div className="text-sm text-gray-600">Largest: {formatCurrency(stats.largestWin)}</div>
+                  <div className="text-sm text-gray-600">Max Streak: {stats.maxWinStreak}</div>
+                </div>
+                <div className="bg-red-50 p-4 rounded">
+                  <div className="text-lg font-bold text-red-600">{stats.losers} Losses</div>
+                  <div className="text-sm text-gray-600">Avg Loss: {formatCurrency(stats.avgLoss)}</div>
+                  <div className="text-sm text-gray-600">Avg Loss %: {stats.avgLossPercent.toFixed(2)}%</div>
+                  <div className="text-sm text-gray-600">Largest: {formatCurrency(Math.abs(stats.largestLoss))}</div>
+                  <div className="text-sm text-gray-600">Max Streak: {stats.maxLossStreak}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Stop Loss Analysis */}
+            <div className="bg-gradient-to-br from-red-500 to-rose-600 p-6 rounded-lg shadow-lg text-white">
+              <h2 className="text-xl font-semibold mb-4">🛑 Stop Loss Analysis</h2>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <div className="text-sm opacity-90">Avg Max Drawdown</div>
+                  <div className="text-3xl font-bold">{stats.avgMaxDrawdown.toFixed(2)}%</div>
+                </div>
+                <div>
+                  <div className="text-sm opacity-90">Recommended Stop Loss</div>
+                  <div className="text-3xl font-bold">{stats.recommendedStopLoss.toFixed(2)}%</div>
+                </div>
+              </div>
+              <div className="bg-white bg-opacity-20 p-4 rounded">
+                <div className="text-sm">Set a hard stop loss at <span className="font-bold text-xl">{stats.recommendedStopLoss.toFixed(2)}%</span> and stick to it.</div>
+              </div>
+            </div>
+
+            {/* Money Left on Table */}
+            <div className="bg-gradient-to-br from-orange-500 to-red-500 p-6 rounded-lg shadow-lg text-white">
+              <h2 className="text-xl font-semibold mb-4">💰 Money Left on Table</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-sm opacity-90">Missed Profit</div>
+                  <div className="text-3xl font-bold">{formatCurrency(stats.totalMissedProfit)}</div>
+                </div>
+                <div>
+                  <div className="text-sm opacity-90">Optimal TP</div>
+                  <div className="text-3xl font-bold">{stats.optimalTakeProfitPercent.toFixed(1)}%</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Hold Time Analysis */}
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-xl font-semibold mb-4 text-gray-800">⏱️ Hold Time Analysis</h2>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-gray-50 p-4 rounded text-center">
+                  <div className="text-2xl font-bold text-gray-800">{stats.avgHoldTime}</div>
+                  <div className="text-xs text-gray-600">Avg Hold Time</div>
+                </div>
+                <div className="bg-green-50 p-4 rounded text-center">
+                  <div className="text-2xl font-bold text-green-600">{stats.avgWinHoldTime}</div>
+                  <div className="text-xs text-gray-600">Avg Winner Hold</div>
+                </div>
+                <div className="bg-red-50 p-4 rounded text-center">
+                  <div className="text-2xl font-bold text-red-600">{stats.avgLossHoldTime}</div>
+                  <div className="text-xs text-gray-600">Avg Loser Hold</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Emotion Analysis */}
+            {(stats.fomoCount > 0 || stats.revengeCount > 0 || stats.calmCount > 0) && (
+              <div className="bg-white p-6 rounded-lg shadow-md">
+                <h2 className="text-xl font-semibold mb-4 text-gray-800">🧠 Emotion Analysis</h2>
+                <div className="grid grid-cols-3 gap-4">
+                  {stats.calmCount > 0 && (
+                    <div className="bg-blue-50 p-4 rounded text-center">
+                      <div className="text-2xl font-bold text-blue-600">{stats.calmWinRate}%</div>
+                      <div className="text-xs text-gray-600">Calm Win Rate</div>
+                      <div className="text-xs text-gray-400">({stats.calmCount} trades)</div>
+                    </div>
+                  )}
+                  {stats.fomoCount > 0 && (
+                    <div className="bg-yellow-50 p-4 rounded text-center">
+                      <div className="text-2xl font-bold text-yellow-600">{stats.fomoWinRate}%</div>
+                      <div className="text-xs text-gray-600">FOMO Win Rate</div>
+                      <div className="text-xs text-gray-400">({stats.fomoCount} trades)</div>
+                    </div>
+                  )}
+                  {stats.revengeCount > 0 && (
+                    <div className="bg-red-50 p-4 rounded text-center">
+                      <div className="text-2xl font-bold text-red-600">{stats.revengeWinRate}%</div>
+                      <div className="text-xs text-gray-600">Revenge Win Rate</div>
+                      <div className="text-xs text-gray-400">({stats.revengeCount} trades)</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
         )}
+
+        {/* Old Job vs Trading */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800">💼 Old Job vs Trading</h2>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center pb-3 border-b">
+              <span className="text-gray-600">Old hourly rate:</span>
+              <span className="font-semibold text-gray-800">{formatCurrency(parseFloat(oldHourlySalary))}/hr</span>
+            </div>
+            <div className="flex justify-between items-center pb-3 border-b">
+              <span className="text-gray-600">Trading hourly rate:</span>
+              <span className={`font-semibold ${jobStats.effectiveHourlyRate >= parseFloat(oldHourlySalary) ? 'text-green-600' : 'text-red-600'}`}>
+                {formatCurrency(jobStats.effectiveHourlyRate)}/hr
+              </span>
+            </div>
+            <div className="flex justify-between items-center pb-3 border-b">
+              <span className="text-gray-600">Difference:</span>
+              <span className={`font-bold text-lg ${jobStats.salaryComparison >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {jobStats.salaryComparison >= 0 ? '+' : ''}{jobStats.salaryComparison}%
+              </span>
+            </div>
+            
+            <div className="bg-gray-50 p-3 rounded text-sm text-gray-600">
+              <div>Hours logged: <span className="font-semibold text-gray-800">{jobStats.totalHours.toFixed(1)}</span></div>
+              <div>Days worked: <span className="font-semibold text-gray-800">{jobStats.daysWorked}</span></div>
+            </div>
+            
+            <div className="bg-blue-50 p-4 rounded">
+              <div className="text-sm text-gray-600 mb-1">Old annual salary (40hr/week):</div>
+              <div className="text-lg font-semibold text-gray-800">{formatCurrency(jobStats.oldYearlyIncome)}</div>
+              
+              <div className="text-sm text-gray-600 mt-3 mb-1">Trading annual projection:</div>
+              <div className={`text-lg font-semibold ${jobStats.tradingAnnualProjection >= jobStats.oldYearlyIncome ? 'text-green-600' : 'text-gray-800'}`}>
+                {formatCurrency(jobStats.tradingAnnualProjection)}
+              </div>
+            </div>
+            
+            {jobStats.daysToSurpassOldJob !== Infinity && jobStats.daysToSurpassOldJob > 0 && jobStats.totalProfit < jobStats.oldYearlyIncome && (
+              <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-4 rounded-lg border-2 border-purple-200">
+                <div className="text-sm text-gray-700 mb-2">📅 Days to surpass old annual salary:</div>
+                <div className="text-3xl font-bold text-purple-600">{jobStats.daysToSurpassOldJob}</div>
+              </div>
+            )}
+            
+            {jobStats.totalProfit >= jobStats.oldYearlyIncome && (
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-lg border-2 border-green-400">
+                <div className="text-lg font-bold text-green-700 mb-1">🎉 You've surpassed your old salary!</div>
+                <div className="text-sm text-green-600">
+                  You're now making {formatCurrency(jobStats.totalProfit - jobStats.oldYearlyIncome)} more than your old job.
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Day Breakdown */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold mb-4 text-gray-800">📅 Day Breakdown</h2>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="text-center p-3 bg-green-50 rounded">
+              <div className="text-2xl font-bold text-green-600">{jobStats.profitableDays}</div>
+              <div className="text-xs text-gray-600">Profitable</div>
+            </div>
+            <div className="text-center p-3 bg-red-50 rounded">
+              <div className="text-2xl font-bold text-red-600">{jobStats.losingDays}</div>
+              <div className="text-xs text-gray-600">Losing</div>
+            </div>
+            <div className="text-center p-3 bg-emerald-50 rounded">
+              <div className="text-2xl font-bold text-emerald-600">{jobStats.daysOver1k}</div>
+              <div className="text-xs text-gray-600">$1K+</div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   };
