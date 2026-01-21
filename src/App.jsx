@@ -141,7 +141,6 @@ export default function App() {
     const avgWinPercent = winners.length > 0 ? winners.reduce((sum, t) => sum + t.actualProfitPercent, 0) / winners.length : 0;
     const avgLossPercent = losers.length > 0 ? Math.abs(losers.reduce((sum, t) => sum + t.actualProfitPercent, 0) / losers.length) : 0;
 
-    // Money left on table
     const totalMissedProfit = allTrades.reduce((sum, t) => sum + (t.missedProfit || 0), 0);
     const totalPotentialProfit = allTrades.reduce((sum, t) => sum + (t.potentialProfit || 0), 0);
     const missedProfitPercent = totalPotentialProfit > 0 ? (totalMissedProfit / totalPotentialProfit) * 100 : 0;
@@ -149,14 +148,12 @@ export default function App() {
     const avgPotentialProfitPercent = allTrades.reduce((sum, t) => sum + (t.potentialProfitPercent || 0), 0) / allTrades.length;
     const optimalTakeProfitPercent = avgPotentialProfitPercent * 0.85;
 
-    // Stop loss analysis
     const losingTrades = allTrades.filter(t => t.actualProfit < 0);
     const avgMaxDrawdown = losingTrades.length > 0 
       ? losingTrades.reduce((sum, t) => sum + Math.abs(t.maxDrawdown || 0), 0) / losingTrades.length 
       : 0;
     const recommendedStopLoss = Math.min(avgMaxDrawdown * 0.5, 15);
     
-    // Hold times
     const tradesWithHoldTime = allTrades.filter(t => t.openDate && t.closeDate);
     let avgHoldTimeMs = 0;
     let avgWinHoldTimeMs = 0;
@@ -191,7 +188,6 @@ export default function App() {
     const largestWin = winners.length > 0 ? Math.max(...winners.map(t => t.actualProfit)) : 0;
     const largestLoss = losers.length > 0 ? Math.min(...losers.map(t => t.actualProfit)) : 0;
 
-    // Streaks
     let currentStreak = 0;
     let maxWinStreak = 0;
     let maxLossStreak = 0;
@@ -220,7 +216,6 @@ export default function App() {
       }
     }
 
-    // Emotion analysis
     const emotionTrades = allTrades.filter(t => t.emotions);
     const fomoTrades = emotionTrades.filter(t => t.emotions.toLowerCase().includes('fomo'));
     const revengeTrades = emotionTrades.filter(t => t.emotions.toLowerCase().includes('revenge'));
@@ -272,17 +267,16 @@ export default function App() {
     const minPrice = parseFloat(newTrade.minPrice);
     const positionSize = parseFloat(newTrade.positionSize);
     
-    const actualProfit = (exit - entry) * positionSize;
-    const potentialProfit = (maxPrice - entry) * positionSize;
-    const missedProfit = maxPrice > exit ? (maxPrice - exit) * positionSize : 0;
-    const missedPercent = maxPrice > exit ? ((maxPrice - exit) / exit) * 100 : 0;
-    
     const actualProfitPercent = ((exit - entry) / entry) * 100;
     const potentialProfitPercent = ((maxPrice - entry) / entry) * 100;
+    const maxDrawdownPercent = ((minPrice - entry) / entry) * 100;
+    const missedPercent = maxPrice > exit ? ((maxPrice - exit) / exit) * 100 : 0;
     
-    const maxDrawdown = ((minPrice - entry) / entry) * 100;
+    const actualProfit = positionSize * (actualProfitPercent / 100);
+    const potentialProfit = positionSize * (potentialProfitPercent / 100);
+    const missedProfit = maxPrice > exit ? positionSize * (((maxPrice - exit) / exit) * 100 / 100) : 0;
+    
     const wasEverProfitable = maxPrice > entry;
-    
     const savedByEarlyExit = actualProfit > 0 && exit < maxPrice;
     const roundtripped = actualProfit < 0 && wasEverProfitable;
 
@@ -306,7 +300,7 @@ export default function App() {
       missedPercent,
       actualProfitPercent,
       potentialProfitPercent,
-      maxDrawdown,
+      maxDrawdown: maxDrawdownPercent,
       wasEverProfitable,
       savedByEarlyExit,
       roundtripped,
@@ -453,7 +447,6 @@ export default function App() {
 
     return (
       <div className="mt-8 space-y-6">
-        {/* Motivational Quote */}
         <div className="bg-gradient-to-br from-blue-500 to-purple-600 p-8 rounded-lg shadow-lg text-white">
           <div className="text-2xl font-bold mb-2">{quote.quote}</div>
           <div className="text-blue-100 text-sm">{quote.subtext}</div>
@@ -461,7 +454,6 @@ export default function App() {
 
         {stats && (
           <>
-            {/* Main Stats */}
             <div className="bg-white p-6 rounded-lg shadow-md">
               <h2 className="text-xl font-semibold mb-4 text-gray-800">📊 Trading Statistics</h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -486,7 +478,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Win/Loss Analysis */}
             <div className="bg-white p-6 rounded-lg shadow-md">
               <h2 className="text-xl font-semibold mb-4 text-gray-800">🎯 Win/Loss Analysis</h2>
               <div className="grid grid-cols-2 gap-4">
@@ -507,7 +498,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Stop Loss Analysis */}
             <div className="bg-gradient-to-br from-red-500 to-rose-600 p-6 rounded-lg shadow-lg text-white">
               <h2 className="text-xl font-semibold mb-4">🛑 Stop Loss Analysis</h2>
               <div className="grid grid-cols-2 gap-4 mb-4">
@@ -525,7 +515,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Money Left on Table */}
             <div className="bg-gradient-to-br from-orange-500 to-red-500 p-6 rounded-lg shadow-lg text-white">
               <h2 className="text-xl font-semibold mb-4">💰 Money Left on Table</h2>
               <div className="grid grid-cols-2 gap-4">
@@ -540,7 +529,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Hold Time Analysis */}
             <div className="bg-white p-6 rounded-lg shadow-md">
               <h2 className="text-xl font-semibold mb-4 text-gray-800">⏱️ Hold Time Analysis</h2>
               <div className="grid grid-cols-3 gap-4">
@@ -559,7 +547,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Emotion Analysis */}
             {(stats.fomoCount > 0 || stats.revengeCount > 0 || stats.calmCount > 0) && (
               <div className="bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-xl font-semibold mb-4 text-gray-800">🧠 Emotion Analysis</h2>
@@ -591,7 +578,6 @@ export default function App() {
           </>
         )}
 
-        {/* Old Job vs Trading */}
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4 text-gray-800">💼 Old Job vs Trading</h2>
           <div className="space-y-4">
@@ -645,7 +631,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Day Breakdown */}
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4 text-gray-800">📅 Day Breakdown</h2>
           <div className="grid grid-cols-3 gap-3">
