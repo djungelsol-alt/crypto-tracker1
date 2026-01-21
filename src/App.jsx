@@ -17,6 +17,10 @@ export default function App() {
     const saved = localStorage.getItem('cryptoTracker');
     return saved ? JSON.parse(saved).startingBalance || '' : '';
   });
+  const [withdrawals, setWithdrawals] = useState(() => {
+    const saved = localStorage.getItem('cryptoTracker');
+    return saved ? JSON.parse(saved).withdrawals || [] : [];
+  });
   const [dailyData, setDailyData] = useState(() => {
     const saved = localStorage.getItem('cryptoTracker');
     return saved ? JSON.parse(saved).dailyData || Array(365).fill(null).map(() => ({ profit: 0, hours: 0, trades: [] })) : Array(365).fill(null).map(() => ({ profit: 0, hours: 0, trades: [] }));
@@ -25,6 +29,9 @@ export default function App() {
   const [viewMode, setViewMode] = useState('day');
   const [tempHours, setTempHours] = useState('');
   const [showSlowDownAlert, setShowSlowDownAlert] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawDate, setWithdrawDate] = useState(new Date().toISOString().split('T')[0]);
   const [lastTradeProfit, setLastTradeProfit] = useState(0);
   const [newTrade, setNewTrade] = useState({
     entries: [{ price: '', size: '', date: '', time: '' }],
@@ -43,9 +50,10 @@ export default function App() {
       startDate,
       oldHourlySalary,
       startingBalance,
+      withdrawals,
       dailyData
     }));
-  }, [step, startDate, oldHourlySalary, startingBalance, dailyData]);
+  }, [step, startDate, oldHourlySalary, startingBalance, withdrawals, dailyData]);
 
   const getAllTrades = () => dailyData.flatMap(day => day.trades);
 
@@ -57,10 +65,33 @@ export default function App() {
   };
 
   const getTotalProfit = () => dailyData.reduce((sum, day) => sum + day.profit, 0);
+  
+  const getTotalWithdrawn = () => withdrawals.reduce((sum, w) => sum + w.amount, 0);
+
+  const getYearlySalary = () => parseFloat(oldHourlySalary) * 40 * 52;
 
   const getCurrentBalance = () => {
     const starting = parseFloat(startingBalance) || 0;
-    return starting + getTotalProfit();
+    return starting + getTotalProfit() - getTotalWithdrawn();
+  };
+
+  const handleWithdraw = () => {
+    const amount = parseFloat(withdrawAmount);
+    if (!amount || amount <= 0) return;
+    
+    setWithdrawals([...withdrawals, {
+      id: Date.now(),
+      amount,
+      date: withdrawDate
+    }]);
+    
+    setWithdrawAmount('');
+    setWithdrawDate(new Date().toISOString().split('T')[0]);
+    setShowWithdrawModal(false);
+  };
+
+  const deleteWithdrawal = (id) => {
+    setWithdrawals(withdrawals.filter(w => w.id !== id));
   };
 
   const calculateHoldTime = (entries, exits) => {
@@ -87,67 +118,47 @@ export default function App() {
     
     const insights = [];
     
-    // Trade type analysis
     const scalps = allTrades.filter(t => t.tradeType === 'scalp');
     const swings = allTrades.filter(t => t.tradeType === 'swing');
     const holds = allTrades.filter(t => t.tradeType === 'hold');
-    
-    const scalpWinRate = scalps.length > 0 ? (scalps.filter(t => t.actualProfit > 0).length / scalps.length * 100) : 0;
-    const swingWinRate = swings.length > 0 ? (swings.filter(t => t.actualProfit > 0).length / swings.length * 100) : 0;
-    const holdWinRate = holds.length > 0 ? (holds.filter(t => t.actualProfit > 0).length / holds.length * 100) : 0;
     
     const scalpAvgProfit = scalps.length > 0 ? scalps.reduce((sum, t) => sum + t.actualProfit, 0) / scalps.length : 0;
     const swingAvgProfit = swings.length > 0 ? swings.reduce((sum, t) => sum + t.actualProfit, 0) / swings.length : 0;
     const holdAvgProfit = holds.length > 0 ? holds.reduce((sum, t) => sum + t.actualProfit, 0) / holds.length : 0;
     
     const bestType = [
-      { type: 'scalping', rate: scalpWinRate, avg: scalpAvgProfit, count: scalps.length },
-      { type: 'swing trading', rate: swingWinRate, avg: swingAvgProfit, count: swings.length },
-      { type: 'holding', rate: holdWinRate, avg: holdAvgProfit, count: holds.length }
+      { type: 'scalping', avg: scalpAvgProfit, count: scalps.length },
+      { type: 'swing trading', avg: swingAvgProfit, count: swings.length },
+      { type: 'holding', avg: holdAvgProfit, count: holds.length }
     ].filter(t => t.count >= 2).sort((a, b) => b.avg - a.avg)[0];
     
     if (bestType && bestType.avg > 0) {
-      insights.push({ type: 'positive', text: `You're best at ${bestType.type} (${bestType.rate.toFixed(0)}% win rate, avg +$${bestType.avg.toFixed(0)})` });
+      insights.push({ type: 'positive', text: `Best at ${bestType.type}: +$${bestType.avg.toFixed(0)} avg` });
     }
     
     const worstType = [
-      { type: 'scalping', rate: scalpWinRate, avg: scalpAvgProfit, count: scalps.length },
-      { type: 'swing trading', rate: swingWinRate, avg: swingAvgProfit, count: swings.length },
-      { type: 'holding', rate: holdWinRate, avg: holdAvgProfit, count: holds.length }
+      { type: 'scalping', avg: scalpAvgProfit, count: scalps.length },
+      { type: 'swing trading', avg: swingAvgProfit, count: swings.length },
+      { type: 'holding', avg: holdAvgProfit, count: holds.length }
     ].filter(t => t.count >= 2).sort((a, b) => a.avg - b.avg)[0];
     
     if (worstType && worstType.avg < 0) {
-      insights.push({ type: 'negative', text: `Avoid ${worstType.type} - losing avg $${Math.abs(worstType.avg).toFixed(0)} per trade` });
+      insights.push({ type: 'negative', text: `Avoid ${worstType.type}: -$${Math.abs(worstType.avg).toFixed(0)} avg` });
     }
     
-    // DCA analysis
     const dcaTrades = allTrades.filter(t => t.entries && t.entries.length > 1);
     if (dcaTrades.length >= 2) {
-      const dcaWinRate = dcaTrades.filter(t => t.actualProfit > 0).length / dcaTrades.length * 100;
       const dcaAvgProfit = dcaTrades.reduce((sum, t) => sum + t.actualProfit, 0) / dcaTrades.length;
       const singleEntryTrades = allTrades.filter(t => !t.entries || t.entries.length === 1);
       const singleAvgProfit = singleEntryTrades.length > 0 ? singleEntryTrades.reduce((sum, t) => sum + t.actualProfit, 0) / singleEntryTrades.length : 0;
       
       if (dcaAvgProfit < singleAvgProfit - 50) {
-        insights.push({ type: 'warning', text: `DCA is hurting you! Avg -$${Math.abs(dcaAvgProfit - singleAvgProfit).toFixed(0)} worse than single entries` });
+        insights.push({ type: 'warning', text: `DCA hurting you: -$${Math.abs(dcaAvgProfit - singleAvgProfit).toFixed(0)} vs single entry` });
       } else if (dcaAvgProfit > singleAvgProfit + 50) {
-        insights.push({ type: 'positive', text: `DCA is working! Avg +$${(dcaAvgProfit - singleAvgProfit).toFixed(0)} better than single entries` });
+        insights.push({ type: 'positive', text: `DCA working: +$${(dcaAvgProfit - singleAvgProfit).toFixed(0)} vs single entry` });
       }
     }
     
-    // Partial exit analysis
-    const partialExitTrades = allTrades.filter(t => t.exits && t.exits.length > 1);
-    if (partialExitTrades.length >= 2) {
-      const partialAvgProfit = partialExitTrades.reduce((sum, t) => sum + t.actualProfit, 0) / partialExitTrades.length;
-      const singleExitTrades = allTrades.filter(t => !t.exits || t.exits.length === 1);
-      const singleExitAvg = singleExitTrades.length > 0 ? singleExitTrades.reduce((sum, t) => sum + t.actualProfit, 0) / singleExitTrades.length : 0;
-      
-      if (partialAvgProfit > singleExitAvg + 50) {
-        insights.push({ type: 'positive', text: `Scaling out is working well for you (+$${(partialAvgProfit - singleExitAvg).toFixed(0)} avg)` });
-      }
-    }
-    
-    // Hold time analysis
     const tradesWithTime = allTrades.filter(t => t.holdTimeMins);
     if (tradesWithTime.length >= 5) {
       const winners = tradesWithTime.filter(t => t.actualProfit > 0);
@@ -157,53 +168,27 @@ export default function App() {
       const avgLossHold = losers.length > 0 ? losers.reduce((sum, t) => sum + t.holdTimeMins, 0) / losers.length : 0;
       
       if (avgLossHold > avgWinHold * 1.5 && avgLossHold > 30) {
-        insights.push({ type: 'warning', text: `You hold losers too long (${Math.floor(avgLossHold)}min avg vs ${Math.floor(avgWinHold)}min for winners)` });
-      }
-      
-      // Quick scalp analysis
-      const quickTrades = tradesWithTime.filter(t => t.holdTimeMins < 15);
-      const longerTrades = tradesWithTime.filter(t => t.holdTimeMins >= 15);
-      
-      if (quickTrades.length >= 3 && longerTrades.length >= 3) {
-        const quickWinRate = quickTrades.filter(t => t.actualProfit > 0).length / quickTrades.length * 100;
-        const longerWinRate = longerTrades.filter(t => t.actualProfit > 0).length / longerTrades.length * 100;
-        
-        if (quickWinRate > longerWinRate + 15) {
-          insights.push({ type: 'positive', text: `Quick trades (<15min) working better: ${quickWinRate.toFixed(0)}% vs ${longerWinRate.toFixed(0)}%` });
-        } else if (longerWinRate > quickWinRate + 15) {
-          insights.push({ type: 'positive', text: `Patience pays off: longer holds at ${longerWinRate.toFixed(0)}% vs ${quickWinRate.toFixed(0)}%` });
-        }
+        insights.push({ type: 'warning', text: `Holding losers too long: ${Math.floor(avgLossHold)}min vs ${Math.floor(avgWinHold)}min winners` });
       }
     }
     
-    // Emotion patterns
     const emotionTrades = allTrades.filter(t => t.emotions);
     if (emotionTrades.length >= 3) {
       const fomoTrades = emotionTrades.filter(t => t.emotions.toLowerCase().includes('fomo'));
-      const calmTrades = emotionTrades.filter(t => t.emotions.toLowerCase().includes('calm'));
-      
       if (fomoTrades.length >= 2) {
         const fomoWinRate = fomoTrades.filter(t => t.actualProfit > 0).length / fomoTrades.length * 100;
         if (fomoWinRate < 40) {
-          insights.push({ type: 'warning', text: `FOMO trades only ${fomoWinRate.toFixed(0)}% win rate - slow down!` });
-        }
-      }
-      
-      if (calmTrades.length >= 2) {
-        const calmWinRate = calmTrades.filter(t => t.actualProfit > 0).length / calmTrades.length * 100;
-        if (calmWinRate > 60) {
-          insights.push({ type: 'positive', text: `Calm trades at ${calmWinRate.toFixed(0)}% - stay patient!` });
+          insights.push({ type: 'warning', text: `FOMO trades: ${fomoWinRate.toFixed(0)}% win rate - slow down!` });
         }
       }
     }
     
-    // Recent streak
     const recentTrades = allTrades.slice(-5);
     const recentWins = recentTrades.filter(t => t.actualProfit > 0).length;
     if (recentWins >= 4) {
-      insights.push({ type: 'positive', text: `🔥 Hot streak! ${recentWins}/5 recent trades profitable` });
+      insights.push({ type: 'positive', text: `🔥 Hot streak: ${recentWins}/5 wins` });
     } else if (recentWins <= 1) {
-      insights.push({ type: 'warning', text: `Cold streak - consider taking a break` });
+      insights.push({ type: 'warning', text: `Cold streak - consider a break` });
     }
     
     return insights.slice(0, 4);
@@ -219,7 +204,7 @@ export default function App() {
     const avgDailyProfit = totalProfit / 365;
     const effectiveHourlyRate = totalHours > 0 ? totalProfit / totalHours : 0;
     
-    const oldYearlyIncome = parseFloat(oldHourlySalary) * 40 * 52;
+    const oldYearlyIncome = getYearlySalary();
     
     const daysWorked = dailyData.filter(day => day.hours > 0).length;
     const avgHoursPerDay = daysWorked > 0 ? totalHours / daysWorked : 0;
@@ -227,12 +212,6 @@ export default function App() {
     
     const tradingAnnualProjection = effectiveHourlyRate * hoursPerDayForProjection * 365;
     
-    const profitNeeded = oldYearlyIncome - totalProfit;
-    const dailyEarningsAtCurrentRate = effectiveHourlyRate * hoursPerDayForProjection;
-    const daysToSurpassOldJob = dailyEarningsAtCurrentRate > 0 
-      ? Math.ceil(profitNeeded / dailyEarningsAtCurrentRate) 
-      : Infinity;
-
     const salaryComparison = parseFloat(oldHourlySalary) > 0 
       ? ((effectiveHourlyRate / parseFloat(oldHourlySalary)) * 100 - 100).toFixed(1)
       : 0;
@@ -247,10 +226,7 @@ export default function App() {
       effectiveHourlyRate,
       oldYearlyIncome,
       daysWorked,
-      avgHoursPerDay,
-      hoursPerDayForProjection,
       tradingAnnualProjection,
-      daysToSurpassOldJob,
       salaryComparison
     };
   };
@@ -271,7 +247,6 @@ export default function App() {
     const avgLossPercent = losers.length > 0 ? Math.abs(losers.reduce((sum, t) => sum + t.actualProfitPercent, 0) / losers.length) : 0;
 
     const totalMissedProfit = allTrades.reduce((sum, t) => sum + (t.missedProfit || 0), 0);
-    const totalPotentialProfit = allTrades.reduce((sum, t) => sum + (t.potentialProfit || 0), 0);
     
     const avgPotentialProfitPercent = allTrades.reduce((sum, t) => sum + (t.potentialProfitPercent || 0), 0) / allTrades.length;
     const optimalTakeProfitPercent = avgPotentialProfitPercent * 0.85;
@@ -285,7 +260,6 @@ export default function App() {
     const largestWin = winners.length > 0 ? Math.max(...winners.map(t => t.actualProfit)) : 0;
     const largestLoss = losers.length > 0 ? Math.min(...losers.map(t => t.actualProfit)) : 0;
 
-    // Trade type breakdown
     const scalps = allTrades.filter(t => t.tradeType === 'scalp');
     const swings = allTrades.filter(t => t.tradeType === 'swing');
     const holds = allTrades.filter(t => t.tradeType === 'hold');
@@ -294,24 +268,20 @@ export default function App() {
       scalp: {
         count: scalps.length,
         winRate: scalps.length > 0 ? (scalps.filter(t => t.actualProfit > 0).length / scalps.length * 100) : 0,
-        avgProfit: scalps.length > 0 ? scalps.reduce((sum, t) => sum + t.actualProfit, 0) / scalps.length : 0,
-        totalProfit: scalps.reduce((sum, t) => sum + t.actualProfit, 0)
+        avgProfit: scalps.length > 0 ? scalps.reduce((sum, t) => sum + t.actualProfit, 0) / scalps.length : 0
       },
       swing: {
         count: swings.length,
         winRate: swings.length > 0 ? (swings.filter(t => t.actualProfit > 0).length / swings.length * 100) : 0,
-        avgProfit: swings.length > 0 ? swings.reduce((sum, t) => sum + t.actualProfit, 0) / swings.length : 0,
-        totalProfit: swings.reduce((sum, t) => sum + t.actualProfit, 0)
+        avgProfit: swings.length > 0 ? swings.reduce((sum, t) => sum + t.actualProfit, 0) / swings.length : 0
       },
       hold: {
         count: holds.length,
         winRate: holds.length > 0 ? (holds.filter(t => t.actualProfit > 0).length / holds.length * 100) : 0,
-        avgProfit: holds.length > 0 ? holds.reduce((sum, t) => sum + t.actualProfit, 0) / holds.length : 0,
-        totalProfit: holds.reduce((sum, t) => sum + t.actualProfit, 0)
+        avgProfit: holds.length > 0 ? holds.reduce((sum, t) => sum + t.actualProfit, 0) / holds.length : 0
       }
     };
 
-    // DCA analysis
     const dcaTrades = allTrades.filter(t => t.entries && t.entries.length > 1);
     const singleEntryTrades = allTrades.filter(t => !t.entries || t.entries.length === 1);
     
@@ -360,7 +330,6 @@ export default function App() {
     const revengeWinRate = revengeTrades.length > 0 ? (revengeTrades.filter(t => t.actualProfit > 0).length / revengeTrades.length * 100).toFixed(1) : null;
     const calmWinRate = calmTrades.length > 0 ? (calmTrades.filter(t => t.actualProfit > 0).length / calmTrades.length * 100).toFixed(1) : null;
 
-    // Hold time stats
     const tradesWithTime = allTrades.filter(t => t.holdTimeMins);
     let avgHoldTime = 'N/A';
     let avgWinHoldTime = 'N/A';
@@ -467,31 +436,28 @@ export default function App() {
     if (validEntries.length === 0 || validExits.length === 0 || !newTrade.maxPrice || !newTrade.minPrice) return;
     if (editingDay === null) return;
     
-    // Calculate weighted average entry
-    const totalEntrySize = validEntries.reduce((sum, e) => sum + parseFloat(e.size), 0);
-    const weightedEntryPrice = validEntries.reduce((sum, e) => sum + (parseFloat(e.price) * parseFloat(e.size)), 0) / totalEntrySize;
+    // Simple calculation: total money in vs total money out
+    const totalIn = validEntries.reduce((sum, e) => sum + parseFloat(e.size), 0);
+    const totalOut = validExits.reduce((sum, e) => sum + parseFloat(e.size), 0);
     
-    // Calculate weighted average exit
-    const totalExitSize = validExits.reduce((sum, e) => sum + parseFloat(e.size), 0);
-    const weightedExitPrice = validExits.reduce((sum, e) => sum + (parseFloat(e.price) * parseFloat(e.size)), 0) / totalExitSize;
+    const actualProfit = totalOut - totalIn;
+    const actualProfitPercent = (actualProfit / totalIn) * 100;
     
+    // For max/min analysis, use weighted average entry price
+    const weightedEntryPrice = validEntries.reduce((sum, e) => sum + (parseFloat(e.price) * parseFloat(e.size)), 0) / totalIn;
     const maxPrice = parseFloat(newTrade.maxPrice);
     const minPrice = parseFloat(newTrade.minPrice);
     
-    // Use smaller of entry/exit size for P&L calc (in case of partial)
-    const positionSize = Math.min(totalEntrySize, totalExitSize);
-    
-    const actualProfitPercent = ((weightedExitPrice - weightedEntryPrice) / weightedEntryPrice) * 100;
     const potentialProfitPercent = ((maxPrice - weightedEntryPrice) / weightedEntryPrice) * 100;
+    const potentialProfit = totalIn * (potentialProfitPercent / 100);
     const maxDrawdownPercent = ((minPrice - weightedEntryPrice) / weightedEntryPrice) * 100;
-    const missedPercent = maxPrice > weightedExitPrice ? ((maxPrice - weightedExitPrice) / weightedExitPrice) * 100 : 0;
     
-    const actualProfit = positionSize * (actualProfitPercent / 100);
-    const potentialProfit = positionSize * (potentialProfitPercent / 100);
-    const missedProfit = maxPrice > weightedExitPrice ? positionSize * missedPercent / 100 : 0;
+    const potentialOut = totalIn * (1 + potentialProfitPercent / 100);
+    const missedProfit = potentialOut > totalOut ? potentialOut - totalOut : 0;
+    const missedPercent = totalOut > 0 ? (missedProfit / totalOut) * 100 : 0;
     
     const wasEverProfitable = maxPrice > weightedEntryPrice;
-    const savedByEarlyExit = actualProfit > 0 && weightedExitPrice < maxPrice;
+    const savedByEarlyExit = actualProfit > 0 && totalOut < potentialOut;
     const roundtripped = actualProfit < 0 && wasEverProfitable;
 
     const holdTimeData = calculateHoldTime(validEntries, validExits);
@@ -500,11 +466,11 @@ export default function App() {
       id: Date.now(),
       entries: validEntries.map(e => ({ ...e, price: parseFloat(e.price), size: parseFloat(e.size) })),
       exits: validExits.map(e => ({ ...e, price: parseFloat(e.price), size: parseFloat(e.size) })),
-      avgEntry: weightedEntryPrice,
-      avgExit: weightedExitPrice,
+      totalIn,
+      totalOut,
+      avgEntryPrice: weightedEntryPrice,
       maxPrice,
       minPrice,
-      positionSize,
       actualProfit,
       potentialProfit,
       missedProfit,
@@ -580,20 +546,69 @@ export default function App() {
     }
   };
 
-  const getMotivationalQuote = (stats) => {
-    if (stats.avgDailyProfit > 1000) {
-      return { quote: "You're making over $1,000 per day. Let that sink in.", subtext: "Most people work a full week to make what you're averaging in a single day." };
-    } else if (stats.profitableDays > stats.losingDays) {
-      return { quote: "It's not a race. You're profitable, and that means you're on track.", subtext: "More winning days than losing days. You're building something sustainable." };
-    } else if (stats.totalProfit > 0) {
-      return { quote: "Progress isn't linear. You're still net positive.", subtext: "Every profitable trader has rough patches. What matters is the long-term trend." };
-    } else {
-      return { quote: "This is part of the journey. Every master was once a beginner.", subtext: "Focus on learning, refining your strategy, and protecting your capital." };
-    }
-  };
-
   const formatCurrency = (num) => {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
+  };
+
+  const renderWithdrawalProgress = () => {
+    const totalWithdrawn = getTotalWithdrawn();
+    const yearlySalary = getYearlySalary();
+    const progressPercent = Math.min((totalWithdrawn / yearlySalary) * 100, 100);
+    
+    return (
+      <div className="bg-gradient-to-br from-green-600 to-emerald-700 p-6 rounded-lg shadow-lg text-white mb-6">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="text-sm opacity-80">Total Withdrawn</div>
+            <div className="text-3xl font-bold">{formatCurrency(totalWithdrawn)}</div>
+          </div>
+          <button 
+            onClick={() => setShowWithdrawModal(true)}
+            className="bg-white text-green-600 px-4 py-2 rounded-lg font-semibold hover:bg-green-50"
+          >
+            + Withdraw
+          </button>
+        </div>
+        
+        <div className="mb-2">
+          <div className="flex justify-between text-sm mb-1">
+            <span>Progress to yearly salary</span>
+            <span>{progressPercent.toFixed(1)}%</span>
+          </div>
+          <div className="w-full bg-white bg-opacity-30 rounded-full h-4">
+            <div 
+              className="bg-white h-4 rounded-full transition-all duration-500"
+              style={{ width: `${progressPercent}%` }}
+            ></div>
+          </div>
+          <div className="flex justify-between text-xs mt-1 opacity-80">
+            <span>$0</span>
+            <span>{formatCurrency(yearlySalary)}</span>
+          </div>
+        </div>
+        
+        {totalWithdrawn >= yearlySalary && (
+          <div className="mt-4 p-3 bg-white bg-opacity-20 rounded-lg text-center">
+            🎉 You've withdrawn a full year's salary!
+          </div>
+        )}
+        
+        {withdrawals.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-white border-opacity-20">
+            <div className="text-sm font-semibold mb-2">Recent Withdrawals</div>
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {withdrawals.slice().reverse().slice(0, 5).map(w => (
+                <div key={w.id} className="flex justify-between items-center text-sm bg-white bg-opacity-10 p-2 rounded">
+                  <span>{w.date}</span>
+                  <span className="font-semibold">{formatCurrency(w.amount)}</span>
+                  <button onClick={() => deleteWithdrawal(w.id)} className="text-red-300 hover:text-red-100 text-xs">✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   const renderInsightsBar = () => {
@@ -647,7 +662,7 @@ export default function App() {
       rows.push(<div key={row} className="flex justify-center">{dayCells}</div>);
     }
     return (
-      <div className="mt-8 bg-white p-6 rounded-lg shadow-md">
+      <div className="bg-white p-6 rounded-lg shadow-md mb-6">
         <h2 className="text-xl font-semibold mb-6 text-gray-800">Your 365-Day Journey</h2>
         <div className="flex flex-col gap-1">{rows}</div>
         <div className="flex justify-center gap-6 mt-6 text-sm">
@@ -663,8 +678,10 @@ export default function App() {
   const renderBalanceCard = () => {
     const starting = parseFloat(startingBalance) || 0;
     const totalProfit = getTotalProfit();
+    const totalWithdrawn = getTotalWithdrawn();
     const currentBalance = getCurrentBalance();
-    const percentChange = starting > 0 ? ((currentBalance - starting) / starting * 100).toFixed(2) : 0;
+    const percentChange = starting > 0 ? ((currentBalance + totalWithdrawn - starting) / starting * 100).toFixed(2) : 0;
+    
     return (
       <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-6 rounded-lg shadow-lg text-white mb-6">
         <div className="flex justify-between items-start">
@@ -677,16 +694,20 @@ export default function App() {
             <div className="text-lg">{formatCurrency(starting)}</div>
           </div>
         </div>
-        <div className="mt-4 pt-4 border-t border-white border-opacity-20 flex justify-between">
+        <div className="mt-4 pt-4 border-t border-white border-opacity-20 grid grid-cols-3 gap-4">
           <div>
             <div className="text-sm opacity-80">Total P&L</div>
-            <div className={`text-xl font-bold ${totalProfit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+            <div className={`text-lg font-bold ${totalProfit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
               {totalProfit >= 0 ? '+' : ''}{formatCurrency(totalProfit)}
             </div>
           </div>
+          <div>
+            <div className="text-sm opacity-80">Withdrawn</div>
+            <div className="text-lg font-bold text-yellow-300">{formatCurrency(totalWithdrawn)}</div>
+          </div>
           <div className="text-right">
-            <div className="text-sm opacity-80">Change</div>
-            <div className={`text-xl font-bold ${percentChange >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+            <div className="text-sm opacity-80">Total Return</div>
+            <div className={`text-lg font-bold ${percentChange >= 0 ? 'text-green-300' : 'text-red-300'}`}>
               {percentChange >= 0 ? '+' : ''}{percentChange}%
             </div>
           </div>
@@ -698,15 +719,9 @@ export default function App() {
   const renderStats = () => {
     const stats = getAdvancedStats();
     const jobStats = calculateOldJobStats();
-    const quote = getMotivationalQuote(jobStats);
 
     return (
-      <div className="mt-8 space-y-6 pb-24">
-        <div className="bg-gradient-to-br from-blue-500 to-purple-600 p-8 rounded-lg shadow-lg text-white">
-          <div className="text-2xl font-bold mb-2">{quote.quote}</div>
-          <div className="text-blue-100 text-sm">{quote.subtext}</div>
-        </div>
-
+      <div className="space-y-6 pb-24">
         {stats && (
           <>
             <div className="bg-white p-6 rounded-lg shadow-md">
@@ -728,12 +743,11 @@ export default function App() {
                   <div className={`text-2xl font-bold ${stats.currentStreak > 0 ? 'text-green-600' : stats.currentStreak < 0 ? 'text-red-600' : 'text-gray-600'}`}>
                     {stats.currentStreak > 0 ? `+${stats.currentStreak}` : stats.currentStreak}
                   </div>
-                  <div className="text-xs text-gray-600">Current Streak</div>
+                  <div className="text-xs text-gray-600">Streak</div>
                 </div>
               </div>
             </div>
 
-            {/* Trade Type Breakdown */}
             <div className="bg-white p-6 rounded-lg shadow-md">
               <h2 className="text-xl font-semibold mb-4 text-gray-800">🎯 Trade Type Analysis</h2>
               <div className="grid grid-cols-3 gap-4">
@@ -764,7 +778,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* DCA Analysis */}
             {stats.dcaStats.count > 0 && (
               <div className="bg-white p-6 rounded-lg shadow-md">
                 <h2 className="text-xl font-semibold mb-4 text-gray-800">📈 DCA Analysis</h2>
@@ -772,7 +785,6 @@ export default function App() {
                   <div className={`p-4 rounded ${stats.dcaStats.avgProfit >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
                     <div className="font-bold text-gray-800">DCA Trades</div>
                     <div className="text-sm text-gray-600">{stats.dcaStats.count} trades</div>
-                    <div className="text-sm text-gray-600">{stats.dcaStats.winRate.toFixed(0)}% win rate</div>
                     <div className={`font-bold ${stats.dcaStats.avgProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {formatCurrency(stats.dcaStats.avgProfit)} avg
                     </div>
@@ -780,89 +792,51 @@ export default function App() {
                   <div className={`p-4 rounded ${stats.dcaStats.singleEntryAvgProfit >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
                     <div className="font-bold text-gray-800">Single Entry</div>
                     <div className="text-sm text-gray-600">{stats.totalTrades - stats.dcaStats.count} trades</div>
-                    <div className="text-sm text-gray-600">{stats.dcaStats.singleEntryWinRate.toFixed(0)}% win rate</div>
                     <div className={`font-bold ${stats.dcaStats.singleEntryAvgProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {formatCurrency(stats.dcaStats.singleEntryAvgProfit)} avg
                     </div>
                   </div>
                 </div>
-                {stats.dcaStats.avgProfit < stats.dcaStats.singleEntryAvgProfit - 20 && (
-                  <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
-                    ⚠️ Your DCA trades are underperforming. Consider sticking to single entries.
-                  </div>
-                )}
               </div>
             )}
 
             <div className="bg-white p-6 rounded-lg shadow-md">
-              <h2 className="text-xl font-semibold mb-4 text-gray-800">🎯 Win/Loss Analysis</h2>
+              <h2 className="text-xl font-semibold mb-4 text-gray-800">🎯 Win/Loss</h2>
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-green-50 p-4 rounded">
                   <div className="text-lg font-bold text-green-600">{stats.winners} Wins</div>
-                  <div className="text-sm text-gray-600">Avg Win: {formatCurrency(stats.avgWin)}</div>
-                  <div className="text-sm text-gray-600">Avg Win %: {stats.avgWinPercent.toFixed(2)}%</div>
+                  <div className="text-sm text-gray-600">Avg: {formatCurrency(stats.avgWin)}</div>
                   <div className="text-sm text-gray-600">Largest: {formatCurrency(stats.largestWin)}</div>
-                  <div className="text-sm text-gray-600">Max Streak: {stats.maxWinStreak}</div>
                 </div>
                 <div className="bg-red-50 p-4 rounded">
                   <div className="text-lg font-bold text-red-600">{stats.losers} Losses</div>
-                  <div className="text-sm text-gray-600">Avg Loss: {formatCurrency(stats.avgLoss)}</div>
-                  <div className="text-sm text-gray-600">Avg Loss %: {stats.avgLossPercent.toFixed(2)}%</div>
+                  <div className="text-sm text-gray-600">Avg: {formatCurrency(stats.avgLoss)}</div>
                   <div className="text-sm text-gray-600">Largest: {formatCurrency(Math.abs(stats.largestLoss))}</div>
-                  <div className="text-sm text-gray-600">Max Streak: {stats.maxLossStreak}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-br from-red-500 to-rose-600 p-6 rounded-lg shadow-lg text-white">
-              <h2 className="text-xl font-semibold mb-4">🛑 Stop Loss Analysis</h2>
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
-                  <div className="text-sm opacity-90">Avg Max Drawdown</div>
-                  <div className="text-3xl font-bold">{stats.avgMaxDrawdown.toFixed(2)}%</div>
-                </div>
-                <div>
-                  <div className="text-sm opacity-90">Recommended Stop</div>
-                  <div className="text-3xl font-bold">{stats.recommendedStopLoss.toFixed(2)}%</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-br from-orange-500 to-red-500 p-6 rounded-lg shadow-lg text-white">
-              <h2 className="text-xl font-semibold mb-4">💰 Money Left on Table</h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm opacity-90">Missed Profit</div>
-                  <div className="text-3xl font-bold">{formatCurrency(stats.totalMissedProfit)}</div>
-                </div>
-                <div>
-                  <div className="text-sm opacity-90">Optimal TP</div>
-                  <div className="text-3xl font-bold">{stats.optimalTakeProfitPercent.toFixed(1)}%</div>
                 </div>
               </div>
             </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md">
-              <h2 className="text-xl font-semibold mb-4 text-gray-800">⏱️ Hold Time Analysis</h2>
+              <h2 className="text-xl font-semibold mb-4 text-gray-800">⏱️ Hold Time</h2>
               <div className="grid grid-cols-3 gap-4">
                 <div className="bg-gray-50 p-4 rounded text-center">
                   <div className="text-2xl font-bold text-gray-800">{stats.avgHoldTime}</div>
-                  <div className="text-xs text-gray-600">Avg Hold</div>
+                  <div className="text-xs text-gray-600">Average</div>
                 </div>
                 <div className="bg-green-50 p-4 rounded text-center">
                   <div className="text-2xl font-bold text-green-600">{stats.avgWinHoldTime}</div>
-                  <div className="text-xs text-gray-600">Avg Winner</div>
+                  <div className="text-xs text-gray-600">Winners</div>
                 </div>
                 <div className="bg-red-50 p-4 rounded text-center">
                   <div className="text-2xl font-bold text-red-600">{stats.avgLossHoldTime}</div>
-                  <div className="text-xs text-gray-600">Avg Loser</div>
+                  <div className="text-xs text-gray-600">Losers</div>
                 </div>
               </div>
             </div>
 
             {(stats.fomoCount > 0 || stats.revengeCount > 0 || stats.calmCount > 0) && (
               <div className="bg-white p-6 rounded-lg shadow-md">
-                <h2 className="text-xl font-semibold mb-4 text-gray-800">🧠 Emotion Analysis</h2>
+                <h2 className="text-xl font-semibold mb-4 text-gray-800">🧠 Emotions</h2>
                 <div className="grid grid-cols-3 gap-4">
                   {stats.calmCount > 0 && (
                     <div className="bg-blue-50 p-4 rounded text-center">
@@ -890,37 +864,28 @@ export default function App() {
 
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4 text-gray-800">💼 Old Job vs Trading</h2>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b">
-              <span className="text-gray-600">Old hourly rate:</span>
-              <span className="font-semibold text-gray-800">{formatCurrency(parseFloat(oldHourlySalary))}/hr</span>
+          <div className="space-y-3">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Old hourly:</span>
+              <span className="font-semibold">{formatCurrency(parseFloat(oldHourlySalary))}/hr</span>
             </div>
-            <div className="flex justify-between items-center pb-3 border-b">
-              <span className="text-gray-600">Trading hourly rate:</span>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Trading hourly:</span>
               <span className={`font-semibold ${jobStats.effectiveHourlyRate >= parseFloat(oldHourlySalary) ? 'text-green-600' : 'text-red-600'}`}>
                 {formatCurrency(jobStats.effectiveHourlyRate)}/hr
               </span>
             </div>
-            <div className="flex justify-between items-center pb-3 border-b">
+            <div className="flex justify-between">
               <span className="text-gray-600">Difference:</span>
-              <span className={`font-bold text-lg ${jobStats.salaryComparison >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <span className={`font-bold ${jobStats.salaryComparison >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {jobStats.salaryComparison >= 0 ? '+' : ''}{jobStats.salaryComparison}%
               </span>
-            </div>
-            
-            <div className="bg-blue-50 p-4 rounded">
-              <div className="text-sm text-gray-600 mb-1">Old annual salary:</div>
-              <div className="text-lg font-semibold text-gray-800">{formatCurrency(jobStats.oldYearlyIncome)}</div>
-              <div className="text-sm text-gray-600 mt-3 mb-1">Trading projection:</div>
-              <div className={`text-lg font-semibold ${jobStats.tradingAnnualProjection >= jobStats.oldYearlyIncome ? 'text-green-600' : 'text-gray-800'}`}>
-                {formatCurrency(jobStats.tradingAnnualProjection)}
-              </div>
             </div>
           </div>
         </div>
 
         <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">📅 Day Breakdown</h2>
+          <h2 className="text-xl font-semibold mb-4 text-gray-800">📅 Days</h2>
           <div className="grid grid-cols-3 gap-3">
             <div className="text-center p-3 bg-green-50 rounded">
               <div className="text-2xl font-bold text-green-600">{jobStats.profitableDays}</div>
@@ -947,15 +912,16 @@ export default function App() {
       setStartDate('');
       setOldHourlySalary('');
       setStartingBalance('');
+      setWithdrawals([]);
       setDailyData(Array(365).fill(null).map(() => ({ profit: 0, hours: 0, trades: [] })));
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-6 pt-16 pb-32">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-6 pt-8 pb-32">
       <div className="max-w-4xl mx-auto">
         <h1 className="text-3xl font-bold text-gray-800 mb-2">Crypto Trading Journey</h1>
-        <p className="text-gray-600 mb-8">Track your progress, learn from your patterns</p>
+        <p className="text-gray-600 mb-6">Track your progress, learn from your patterns</p>
         
         {step === 1 ? (
           <div className="bg-white p-8 rounded-lg shadow-md max-w-md mx-auto">
@@ -981,6 +947,7 @@ export default function App() {
         ) : (
           <>
             {renderBalanceCard()}
+            {renderWithdrawalProgress()}
             {renderDayGrid()}
             {renderStats()}
             <button onClick={handleReset} className="mt-8 w-full bg-gray-600 text-white py-3 rounded-md hover:bg-gray-700 font-semibold">Reset Journey</button>
@@ -990,6 +957,34 @@ export default function App() {
 
       {step === 2 && renderInsightsBar()}
 
+      {/* Withdraw Modal */}
+      {showWithdrawModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full">
+            <h3 className="text-xl font-semibold mb-4">Record Withdrawal</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
+                <input type="date" className="w-full p-3 border rounded-md" value={withdrawDate} onChange={(e) => setWithdrawDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Amount ($)</label>
+                <input type="number" className="w-full p-3 border rounded-md" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} placeholder="1000" />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={handleWithdraw} className="flex-1 bg-green-600 text-white py-2 rounded-md hover:bg-green-700 font-semibold">
+                  Withdraw
+                </button>
+                <button onClick={() => setShowWithdrawModal(false)} className="flex-1 bg-gray-300 py-2 rounded-md hover:bg-gray-400">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Slow Down Alert */}
       {showSlowDownAlert && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-gradient-to-br from-yellow-400 to-orange-500 p-8 rounded-lg shadow-2xl max-w-md w-full text-white">
@@ -1016,6 +1011,7 @@ export default function App() {
         </div>
       )}
 
+      {/* Day Edit Modal */}
       {editingDay !== null && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white p-6 rounded-lg shadow-xl max-w-2xl w-full my-8 max-h-[90vh] overflow-y-auto">
@@ -1030,7 +1026,9 @@ export default function App() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Total P&L</label>
-                    <div className="w-full p-3 bg-gray-100 rounded-md font-semibold">{formatCurrency(dailyData[editingDay].profit)}</div>
+                    <div className={`w-full p-3 rounded-md font-semibold ${dailyData[editingDay].profit >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      {formatCurrency(dailyData[editingDay].profit)}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Hours Traded</label>
@@ -1049,7 +1047,6 @@ export default function App() {
                 <div className="bg-gray-50 p-4 rounded-lg mb-4">
                   <h4 className="font-semibold mb-3">Add Trade</h4>
                   
-                  {/* Trade Type */}
                   <div className="mb-4">
                     <label className="block text-xs font-medium text-gray-700 mb-2">Trade Type</label>
                     <div className="flex gap-2">
@@ -1065,7 +1062,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Entries */}
                   <div className="mb-4">
                     <div className="flex justify-between items-center mb-2">
                       <label className="text-xs font-medium text-gray-700">Entries (buys)</label>
@@ -1075,8 +1071,8 @@ export default function App() {
                       <div key={i} className="grid grid-cols-5 gap-2 mb-2">
                         <input type="date" className="p-2 border rounded text-xs" value={entry.date} onChange={(e) => updateEntry(i, 'date', e.target.value)} />
                         <input type="time" className="p-2 border rounded text-xs" value={entry.time} onChange={(e) => updateEntry(i, 'time', e.target.value)} />
-                        <input type="number" step="any" placeholder="Price" className="p-2 border rounded text-xs" value={entry.price} onChange={(e) => updateEntry(i, 'price', e.target.value)} />
-                        <input type="number" placeholder="Size $" className="p-2 border rounded text-xs" value={entry.size} onChange={(e) => updateEntry(i, 'size', e.target.value)} />
+                        <input type="number" step="any" placeholder="MC/Price" className="p-2 border rounded text-xs" value={entry.price} onChange={(e) => updateEntry(i, 'price', e.target.value)} />
+                        <input type="number" placeholder="$ Size" className="p-2 border rounded text-xs" value={entry.size} onChange={(e) => updateEntry(i, 'size', e.target.value)} />
                         {newTrade.entries.length > 1 && (
                           <button onClick={() => removeEntry(i)} className="text-red-500 text-xs">✕</button>
                         )}
@@ -1084,7 +1080,6 @@ export default function App() {
                     ))}
                   </div>
 
-                  {/* Exits */}
                   <div className="mb-4">
                     <div className="flex justify-between items-center mb-2">
                       <label className="text-xs font-medium text-gray-700">Exits (sells)</label>
@@ -1094,8 +1089,8 @@ export default function App() {
                       <div key={i} className="grid grid-cols-5 gap-2 mb-2">
                         <input type="date" className="p-2 border rounded text-xs" value={exit.date} onChange={(e) => updateExit(i, 'date', e.target.value)} />
                         <input type="time" className="p-2 border rounded text-xs" value={exit.time} onChange={(e) => updateExit(i, 'time', e.target.value)} />
-                        <input type="number" step="any" placeholder="Price" className="p-2 border rounded text-xs" value={exit.price} onChange={(e) => updateExit(i, 'price', e.target.value)} />
-                        <input type="number" placeholder="Size $" className="p-2 border rounded text-xs" value={exit.size} onChange={(e) => updateExit(i, 'size', e.target.value)} />
+                        <input type="number" step="any" placeholder="MC/Price" className="p-2 border rounded text-xs" value={exit.price} onChange={(e) => updateExit(i, 'price', e.target.value)} />
+                        <input type="number" placeholder="$ Out" className="p-2 border rounded text-xs" value={exit.size} onChange={(e) => updateExit(i, 'size', e.target.value)} />
                         {newTrade.exits.length > 1 && (
                           <button onClick={() => removeExit(i)} className="text-red-500 text-xs">✕</button>
                         )}
@@ -1103,7 +1098,6 @@ export default function App() {
                     ))}
                   </div>
 
-                  {/* Max/Min */}
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">Max Price (ATH)</label>
@@ -1115,12 +1109,11 @@ export default function App() {
                     </div>
                   </div>
                   
-                  {/* Journal */}
                   <div className="border-t pt-3 mt-3">
                     <p className="text-xs text-gray-500 mb-2">📝 Journal (optional)</p>
                     <div className="space-y-2">
                       <input type="text" className="w-full p-2 border rounded text-sm" value={newTrade.reason} onChange={(e) => setNewTrade({...newTrade, reason: e.target.value})} placeholder="Why did you take this trade?" />
-                      <input type="text" className="w-full p-2 border rounded text-sm" value={newTrade.emotions} onChange={(e) => setNewTrade({...newTrade, emotions: e.target.value})} placeholder="Emotions? (fomo, calm, revenge, anxious...)" />
+                      <input type="text" className="w-full p-2 border rounded text-sm" value={newTrade.emotions} onChange={(e) => setNewTrade({...newTrade, emotions: e.target.value})} placeholder="Emotions? (fomo, calm, revenge...)" />
                       <input type="text" className="w-full p-2 border rounded text-sm" value={newTrade.lessons} onChange={(e) => setNewTrade({...newTrade, lessons: e.target.value})} placeholder="Lessons learned?" />
                     </div>
                   </div>
@@ -1142,29 +1135,28 @@ export default function App() {
                                 {trade.tradeType}
                               </span>
                               {trade.isDCA && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">DCA</span>}
-                              {trade.holdTime && <span className="text-gray-500">({trade.holdTime})</span>}
+                              {trade.holdTime && <span className="text-gray-500 text-xs">({trade.holdTime})</span>}
                             </span>
                             <button onClick={() => deleteTrade(editingDay, trade.id)} className="text-red-600 text-xs">Delete</button>
                           </div>
                           {trade.roundtripped && <div className="text-xs text-red-600 font-semibold">🔄 ROUNDTRIP!</div>}
                           {trade.savedByEarlyExit && <div className="text-xs text-green-600 font-semibold">✅ EARLY EXIT!</div>}
                           
-                          {/* Entries */}
                           <div className="text-xs text-gray-500 mt-1">
-                            Entries: {trade.entries?.map((e, i) => `$${e.price} (${formatCurrency(e.size)})`).join(' → ')}
+                            In: {trade.entries?.map((e) => `${formatCurrency(e.size)} @ $${e.price}`).join(' + ')}
                           </div>
                           <div className="text-xs text-gray-500">
-                            Exits: {trade.exits?.map((e, i) => `$${e.price} (${formatCurrency(e.size)})`).join(' → ')}
+                            Out: {trade.exits?.map((e) => `${formatCurrency(e.size)} @ $${e.price}`).join(' + ')}
                           </div>
                           
                           <div className="grid grid-cols-2 gap-1 text-xs text-gray-600 mt-2">
-                            <div>Avg Entry: ${trade.avgEntry?.toFixed(6)}</div>
-                            <div>Avg Exit: ${trade.avgExit?.toFixed(6)}</div>
-                            <div>Size: {formatCurrency(trade.positionSize)}</div>
-                            <div className={`font-bold ${trade.actualProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            <div>Total In: {formatCurrency(trade.totalIn)}</div>
+                            <div>Total Out: {formatCurrency(trade.totalOut)}</div>
+                            <div className={`font-bold col-span-2 text-base ${trade.actualProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                               P&L: {formatCurrency(trade.actualProfit)} ({trade.actualProfitPercent?.toFixed(1)}%)
                             </div>
                           </div>
+                          
                           {(trade.reason || trade.emotions || trade.lessons) && (
                             <div className="mt-2 pt-2 border-t text-xs text-gray-500">
                               {trade.reason && <p><strong>Why:</strong> {trade.reason}</p>}
