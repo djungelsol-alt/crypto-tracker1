@@ -34,6 +34,8 @@ export default function App() {
   const [withdrawDate, setWithdrawDate] = useState(new Date().toISOString().split('T')[0]);
   const [lastTradeProfit, setLastTradeProfit] = useState(0);
   const [newTrade, setNewTrade] = useState({
+    tokenName: '',
+    contractAddress: '',
     entries: [{ price: '', size: '', date: '', time: '' }],
     exits: [{ price: '', size: '', date: '', time: '' }],
     maxPrice: '',
@@ -55,7 +57,7 @@ export default function App() {
     }));
   }, [step, startDate, oldHourlySalary, startingBalance, withdrawals, dailyData]);
 
-  const getAllTrades = () => dailyData.flatMap(day => day.trades);
+  const getAllTrades = () => dailyData.flatMap((day, dayIndex) => day.trades.map(t => ({ ...t, dayIndex })));
 
   const getHitRate = () => {
     const allTrades = getAllTrades();
@@ -73,6 +75,87 @@ export default function App() {
   const getCurrentBalance = () => {
     const starting = parseFloat(startingBalance) || 0;
     return starting + getTotalProfit() - getTotalWithdrawn();
+  };
+
+  const exportToCSV = () => {
+    const allTrades = getAllTrades();
+    if (allTrades.length === 0) {
+      alert('No trades to export');
+      return;
+    }
+
+    const headers = [
+      'Day',
+      'Token Name',
+      'Contract Address',
+      'Trade Type',
+      'Entry Date',
+      'Entry Time',
+      'Exit Date',
+      'Exit Time',
+      'Hold Time',
+      'Total In ($)',
+      'Total Out ($)',
+      'P&L ($)',
+      'P&L (%)',
+      'Max Price',
+      'Min Price',
+      'Potential Profit ($)',
+      'Missed Profit ($)',
+      'Was DCA',
+      'Roundtripped',
+      'Early Exit',
+      'Reason',
+      'Emotions',
+      'Lessons',
+      'All Entries (Price@Size)',
+      'All Exits (Price@Size)'
+    ];
+
+    const rows = allTrades.map(trade => {
+      const firstEntry = trade.entries?.[0] || {};
+      const lastExit = trade.exits?.[trade.exits?.length - 1] || {};
+      
+      return [
+        trade.dayIndex + 1,
+        trade.tokenName || '',
+        trade.contractAddress || '',
+        trade.tradeType || '',
+        firstEntry.date || '',
+        firstEntry.time || '',
+        lastExit.date || '',
+        lastExit.time || '',
+        trade.holdTime || '',
+        trade.totalIn?.toFixed(2) || '',
+        trade.totalOut?.toFixed(2) || '',
+        trade.actualProfit?.toFixed(2) || '',
+        trade.actualProfitPercent?.toFixed(2) || '',
+        trade.maxPrice || '',
+        trade.minPrice || '',
+        trade.potentialProfit?.toFixed(2) || '',
+        trade.missedProfit?.toFixed(2) || '',
+        trade.isDCA ? 'Yes' : 'No',
+        trade.roundtripped ? 'Yes' : 'No',
+        trade.savedByEarlyExit ? 'Yes' : 'No',
+        `"${(trade.reason || '').replace(/"/g, '""')}"`,
+        `"${(trade.emotions || '').replace(/"/g, '""')}"`,
+        `"${(trade.lessons || '').replace(/"/g, '""')}"`,
+        `"${trade.entries?.map(e => `${e.price}@$${e.size}`).join('; ') || ''}"`,
+        `"${trade.exits?.map(e => `${e.price}@$${e.size}`).join('; ') || ''}"`
+      ];
+    });
+
+    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `crypto-trades-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleWithdraw = () => {
@@ -201,7 +284,6 @@ export default function App() {
     const losingDays = dailyData.filter(day => day.profit < 0).length;
     const daysOver1k = dailyData.filter(day => day.profit > 1000).length;
     
-    const avgDailyProfit = totalProfit / 365;
     const effectiveHourlyRate = totalHours > 0 ? totalProfit / totalHours : 0;
     
     const oldYearlyIncome = getYearlySalary();
@@ -222,7 +304,6 @@ export default function App() {
       profitableDays,
       losingDays,
       daysOver1k,
-      avgDailyProfit,
       effectiveHourlyRate,
       oldYearlyIncome,
       daysWorked,
@@ -436,14 +517,12 @@ export default function App() {
     if (validEntries.length === 0 || validExits.length === 0 || !newTrade.maxPrice || !newTrade.minPrice) return;
     if (editingDay === null) return;
     
-    // Simple calculation: total money in vs total money out
     const totalIn = validEntries.reduce((sum, e) => sum + parseFloat(e.size), 0);
     const totalOut = validExits.reduce((sum, e) => sum + parseFloat(e.size), 0);
     
     const actualProfit = totalOut - totalIn;
     const actualProfitPercent = (actualProfit / totalIn) * 100;
     
-    // For max/min analysis, use weighted average entry price
     const weightedEntryPrice = validEntries.reduce((sum, e) => sum + (parseFloat(e.price) * parseFloat(e.size)), 0) / totalIn;
     const maxPrice = parseFloat(newTrade.maxPrice);
     const minPrice = parseFloat(newTrade.minPrice);
@@ -454,7 +533,6 @@ export default function App() {
     
     const potentialOut = totalIn * (1 + potentialProfitPercent / 100);
     const missedProfit = potentialOut > totalOut ? potentialOut - totalOut : 0;
-    const missedPercent = totalOut > 0 ? (missedProfit / totalOut) * 100 : 0;
     
     const wasEverProfitable = maxPrice > weightedEntryPrice;
     const savedByEarlyExit = actualProfit > 0 && totalOut < potentialOut;
@@ -464,6 +542,8 @@ export default function App() {
     
     const trade = {
       id: Date.now(),
+      tokenName: newTrade.tokenName,
+      contractAddress: newTrade.contractAddress,
       entries: validEntries.map(e => ({ ...e, price: parseFloat(e.price), size: parseFloat(e.size) })),
       exits: validExits.map(e => ({ ...e, price: parseFloat(e.price), size: parseFloat(e.size) })),
       totalIn,
@@ -474,7 +554,6 @@ export default function App() {
       actualProfit,
       potentialProfit,
       missedProfit,
-      missedPercent,
       actualProfitPercent,
       potentialProfitPercent,
       maxDrawdown: maxDrawdownPercent,
@@ -499,6 +578,8 @@ export default function App() {
     
     setDailyData(newData);
     setNewTrade({
+      tokenName: '',
+      contractAddress: '',
       entries: [{ price: '', size: '', date: '', time: '' }],
       exits: [{ price: '', size: '', date: '', time: '' }],
       maxPrice: '',
@@ -722,6 +803,16 @@ export default function App() {
 
     return (
       <div className="space-y-6 pb-24">
+        {/* Export Button */}
+        <div className="flex justify-end">
+          <button 
+            onClick={exportToCSV}
+            className="bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-2"
+          >
+            📊 Export CSV
+          </button>
+        </div>
+
         {stats && (
           <>
             <div className="bg-white p-6 rounded-lg shadow-md">
@@ -957,7 +1048,6 @@ export default function App() {
 
       {step === 2 && renderInsightsBar()}
 
-      {/* Withdraw Modal */}
       {showWithdrawModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full">
@@ -972,19 +1062,14 @@ export default function App() {
                 <input type="number" className="w-full p-3 border rounded-md" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} placeholder="1000" />
               </div>
               <div className="flex gap-2">
-                <button onClick={handleWithdraw} className="flex-1 bg-green-600 text-white py-2 rounded-md hover:bg-green-700 font-semibold">
-                  Withdraw
-                </button>
-                <button onClick={() => setShowWithdrawModal(false)} className="flex-1 bg-gray-300 py-2 rounded-md hover:bg-gray-400">
-                  Cancel
-                </button>
+                <button onClick={handleWithdraw} className="flex-1 bg-green-600 text-white py-2 rounded-md hover:bg-green-700 font-semibold">Withdraw</button>
+                <button onClick={() => setShowWithdrawModal(false)} className="flex-1 bg-gray-300 py-2 rounded-md hover:bg-gray-400">Cancel</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Slow Down Alert */}
       {showSlowDownAlert && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-gradient-to-br from-yellow-400 to-orange-500 p-8 rounded-lg shadow-2xl max-w-md w-full text-white">
@@ -1011,7 +1096,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Day Edit Modal */}
       {editingDay !== null && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white p-6 rounded-lg shadow-xl max-w-2xl w-full my-8 max-h-[90vh] overflow-y-auto">
@@ -1047,6 +1131,30 @@ export default function App() {
                 <div className="bg-gray-50 p-4 rounded-lg mb-4">
                   <h4 className="font-semibold mb-3">Add Trade</h4>
                   
+                  {/* Token Info */}
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Token Name</label>
+                      <input 
+                        type="text" 
+                        className="w-full p-2 border rounded text-sm" 
+                        value={newTrade.tokenName} 
+                        onChange={(e) => setNewTrade({...newTrade, tokenName: e.target.value})} 
+                        placeholder="e.g., PEPE"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Contract Address</label>
+                      <input 
+                        type="text" 
+                        className="w-full p-2 border rounded text-sm font-mono" 
+                        value={newTrade.contractAddress} 
+                        onChange={(e) => setNewTrade({...newTrade, contractAddress: e.target.value})} 
+                        placeholder="0x..."
+                      />
+                    </div>
+                  </div>
+
                   <div className="mb-4">
                     <label className="block text-xs font-medium text-gray-700 mb-2">Trade Type</label>
                     <div className="flex gap-2">
@@ -1131,6 +1239,7 @@ export default function App() {
                         <div key={trade.id} className="border p-3 rounded bg-white text-sm">
                           <div className="flex justify-between mb-1">
                             <span className="font-medium flex items-center gap-2">
+                              {trade.tokenName && <span className="font-bold">{trade.tokenName}</span>}
                               <span className={`px-2 py-0.5 rounded text-xs ${trade.tradeType === 'scalp' ? 'bg-blue-100 text-blue-700' : trade.tradeType === 'swing' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
                                 {trade.tradeType}
                               </span>
@@ -1139,6 +1248,11 @@ export default function App() {
                             </span>
                             <button onClick={() => deleteTrade(editingDay, trade.id)} className="text-red-600 text-xs">Delete</button>
                           </div>
+                          
+                          {trade.contractAddress && (
+                            <div className="text-xs text-gray-400 font-mono truncate mb-1">{trade.contractAddress}</div>
+                          )}
+                          
                           {trade.roundtripped && <div className="text-xs text-red-600 font-semibold">🔄 ROUNDTRIP!</div>}
                           {trade.savedByEarlyExit && <div className="text-xs text-green-600 font-semibold">✅ EARLY EXIT!</div>}
                           
