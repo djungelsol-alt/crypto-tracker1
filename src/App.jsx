@@ -77,6 +77,15 @@ export default function App() {
     return starting + getTotalProfit() - getTotalWithdrawn();
   };
 
+  const getDaysSinceStart = () => {
+    if (!startDate) return 1;
+    const start = new Date(startDate);
+    const now = new Date();
+    const diffTime = Math.abs(now - start);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return Math.max(diffDays, 1);
+  };
+
   const exportToCSV = () => {
     const allTrades = getAllTrades();
     if (allTrades.length === 0) {
@@ -298,6 +307,11 @@ export default function App() {
       ? ((effectiveHourlyRate / parseFloat(oldHourlySalary)) * 100 - 100).toFixed(1)
       : 0;
 
+    // Calculate daily rate projection
+    const daysSinceStart = getDaysSinceStart();
+    const dailyAvgProfit = totalProfit / daysSinceStart;
+    const yearlyProjectionFromDaily = dailyAvgProfit * 365;
+
     return {
       totalProfit,
       totalHours,
@@ -308,7 +322,10 @@ export default function App() {
       oldYearlyIncome,
       daysWorked,
       tradingAnnualProjection,
-      salaryComparison
+      salaryComparison,
+      daysSinceStart,
+      dailyAvgProfit,
+      yearlyProjectionFromDaily
     };
   };
 
@@ -327,6 +344,12 @@ export default function App() {
     const avgWinPercent = winners.length > 0 ? winners.reduce((sum, t) => sum + t.actualProfitPercent, 0) / winners.length : 0;
     const avgLossPercent = losers.length > 0 ? Math.abs(losers.reduce((sum, t) => sum + t.actualProfitPercent, 0) / losers.length) : 0;
 
+    // Roundtrip stats
+    const roundtrippedTrades = allTrades.filter(t => t.roundtripped);
+    const totalRoundtripped = roundtrippedTrades.reduce((sum, t) => sum + Math.abs(t.actualProfit), 0);
+    const roundtripCount = roundtrippedTrades.length;
+
+    // Missed profit stats
     const totalMissedProfit = allTrades.reduce((sum, t) => sum + (t.missedProfit || 0), 0);
     
     const avgPotentialProfitPercent = allTrades.reduce((sum, t) => sum + (t.potentialProfitPercent || 0), 0) / allTrades.length;
@@ -458,6 +481,8 @@ export default function App() {
       revengeCount: revengeTrades.length,
       calmCount: calmTrades.length,
       totalMissedProfit,
+      totalRoundtripped,
+      roundtripCount,
       optimalTakeProfitPercent,
       avgMaxDrawdown,
       recommendedStopLoss,
@@ -803,6 +828,25 @@ export default function App() {
 
     return (
       <div className="space-y-6 pb-24">
+        {/* Yearly Projection Card */}
+        <div className="bg-gradient-to-br from-purple-600 to-indigo-700 p-6 rounded-lg shadow-lg text-white">
+          <div className="text-center">
+            <div className="text-sm opacity-80 mb-1">At this rate, you're on track to earn</div>
+            <div className="text-4xl font-bold mb-2">{formatCurrency(jobStats.yearlyProjectionFromDaily)}</div>
+            <div className="text-sm opacity-80">per year</div>
+            <div className="mt-4 pt-4 border-t border-white border-opacity-20 grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="opacity-80">Daily Average</div>
+                <div className="font-bold text-lg">{formatCurrency(jobStats.dailyAvgProfit)}</div>
+              </div>
+              <div>
+                <div className="opacity-80">Days Tracked</div>
+                <div className="font-bold text-lg">{jobStats.daysSinceStart}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Export Button */}
         <div className="flex justify-end">
           <button 
@@ -836,6 +880,26 @@ export default function App() {
                   </div>
                   <div className="text-xs text-gray-600">Streak</div>
                 </div>
+              </div>
+            </div>
+
+            {/* Roundtrip & Missed Profit Card */}
+            <div className="bg-gradient-to-br from-red-500 to-orange-600 p-6 rounded-lg shadow-lg text-white">
+              <h2 className="text-xl font-semibold mb-4">💸 Money Lost to Bad Execution</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-white bg-opacity-20 p-4 rounded-lg">
+                  <div className="text-sm opacity-90">Roundtripped</div>
+                  <div className="text-3xl font-bold">{formatCurrency(stats.totalRoundtripped)}</div>
+                  <div className="text-sm opacity-80">{stats.roundtripCount} trades</div>
+                </div>
+                <div className="bg-white bg-opacity-20 p-4 rounded-lg">
+                  <div className="text-sm opacity-90">Left on Table</div>
+                  <div className="text-3xl font-bold">{formatCurrency(stats.totalMissedProfit)}</div>
+                  <div className="text-sm opacity-80">missed profit</div>
+                </div>
+              </div>
+              <div className="mt-4 p-3 bg-white bg-opacity-10 rounded-lg text-sm">
+                <strong>Total execution cost:</strong> {formatCurrency(stats.totalRoundtripped + stats.totalMissedProfit)}
               </div>
             </div>
 
@@ -1131,7 +1195,6 @@ export default function App() {
                 <div className="bg-gray-50 p-4 rounded-lg mb-4">
                   <h4 className="font-semibold mb-3">Add Trade</h4>
                   
-                  {/* Token Info */}
                   <div className="grid grid-cols-2 gap-3 mb-4">
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">Token Name</label>
