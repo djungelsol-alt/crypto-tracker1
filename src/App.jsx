@@ -86,6 +86,106 @@ export default function App() {
     return Math.max(diffDays, 1);
   };
 
+  const getExecutionGuide = () => {
+    const allTrades = getAllTrades();
+    if (allTrades.length < 3) return null;
+
+    const winners = allTrades.filter(t => t.actualProfit > 0);
+    const losers = allTrades.filter(t => t.actualProfit < 0);
+    const roundtrips = allTrades.filter(t => t.roundtripped);
+    
+    // Average % gain on winners
+    const avgWinPercent = winners.length > 0 
+      ? winners.reduce((sum, t) => sum + (t.actualProfitPercent || 0), 0) / winners.length 
+      : 0;
+    
+    // Average % loss on losers
+    const avgLossPercent = losers.length > 0 
+      ? Math.abs(losers.reduce((sum, t) => sum + (t.actualProfitPercent || 0), 0) / losers.length)
+      : 0;
+
+    // What % were roundtrips at their peak before dumping?
+    const roundtripPeakPercents = roundtrips
+      .filter(t => t.potentialProfitPercent)
+      .map(t => t.potentialProfitPercent);
+    const avgRoundtripPeak = roundtripPeakPercents.length > 0
+      ? roundtripPeakPercents.reduce((a, b) => a + b, 0) / roundtripPeakPercents.length
+      : 0;
+
+    // Optimal take profit: where winners actually sold
+    const winnerExitPercents = winners
+      .filter(t => t.actualProfitPercent)
+      .map(t => t.actualProfitPercent);
+    const medianWinPercent = winnerExitPercents.length > 0
+      ? winnerExitPercents.sort((a, b) => a - b)[Math.floor(winnerExitPercents.length / 2)]
+      : 0;
+
+    // Optimal TP based on roundtrip data: sell at 70-80% of peak
+    const optimalTP = avgRoundtripPeak > 0 ? avgRoundtripPeak * 0.7 : avgWinPercent;
+
+    // DCA Analysis
+    const dcaTrades = allTrades.filter(t => t.isDCA);
+    const dcaWinners = dcaTrades.filter(t => t.actualProfit > 0);
+    const dcaLosers = dcaTrades.filter(t => t.actualProfit < 0);
+    
+    const dcaAvgWinPercent = dcaWinners.length > 0
+      ? dcaWinners.reduce((sum, t) => sum + (t.actualProfitPercent || 0), 0) / dcaWinners.length
+      : 0;
+    const dcaAvgLossPercent = dcaLosers.length > 0
+      ? Math.abs(dcaLosers.reduce((sum, t) => sum + (t.actualProfitPercent || 0), 0) / dcaLosers.length)
+      : 0;
+
+    // Non-DCA for comparison
+    const nonDcaTrades = allTrades.filter(t => !t.isDCA);
+    const nonDcaWinners = nonDcaTrades.filter(t => t.actualProfit > 0);
+    const nonDcaLosers = nonDcaTrades.filter(t => t.actualProfit < 0);
+    
+    const nonDcaAvgWinPercent = nonDcaWinners.length > 0
+      ? nonDcaWinners.reduce((sum, t) => sum + (t.actualProfitPercent || 0), 0) / nonDcaWinners.length
+      : 0;
+    const nonDcaAvgLossPercent = nonDcaLosers.length > 0
+      ? Math.abs(nonDcaLosers.reduce((sum, t) => sum + (t.actualProfitPercent || 0), 0) / nonDcaLosers.length)
+      : 0;
+
+    // Stop loss recommendation based on actual loss data
+    const loserDrawdowns = losers
+      .filter(t => t.maxDrawdown)
+      .map(t => Math.abs(t.maxDrawdown));
+    const avgLoserDrawdown = loserDrawdowns.length > 0
+      ? loserDrawdowns.reduce((a, b) => a + b, 0) / loserDrawdowns.length
+      : 0;
+    
+    // Recommended stop: cut at 50-60% of avg loss to minimize damage
+    const recommendedStop = avgLossPercent > 0 ? avgLossPercent * 0.6 : 15;
+
+    // Best exit % for DCA trades specifically
+    const dcaWinnerExits = dcaWinners.filter(t => t.actualProfitPercent).map(t => t.actualProfitPercent);
+    const dcaOptimalExit = dcaWinnerExits.length > 0
+      ? dcaWinnerExits.reduce((a, b) => a + b, 0) / dcaWinnerExits.length
+      : optimalTP;
+
+    return {
+      avgWinPercent,
+      avgLossPercent,
+      avgRoundtripPeak,
+      optimalTP,
+      medianWinPercent,
+      recommendedStop,
+      avgLoserDrawdown,
+      dcaTrades: dcaTrades.length,
+      dcaWinRate: dcaTrades.length > 0 ? (dcaWinners.length / dcaTrades.length * 100) : 0,
+      dcaAvgWinPercent,
+      dcaAvgLossPercent,
+      dcaOptimalExit,
+      nonDcaTrades: nonDcaTrades.length,
+      nonDcaWinRate: nonDcaTrades.length > 0 ? (nonDcaWinners.length / nonDcaTrades.length * 100) : 0,
+      nonDcaAvgWinPercent,
+      nonDcaAvgLossPercent,
+      roundtripCount: roundtrips.length,
+      dcaHelps: dcaAvgWinPercent > nonDcaAvgWinPercent || dcaAvgLossPercent < nonDcaAvgLossPercent
+    };
+  };
+
   const exportToCSV = () => {
     const allTrades = getAllTrades();
     if (allTrades.length === 0) {
@@ -209,6 +309,28 @@ export default function App() {
     if (allTrades.length < 3) return [];
     
     const insights = [];
+    const guide = getExecutionGuide();
+    
+    if (guide) {
+      // Add execution-based insights
+      if (guide.optimalTP > 0 && guide.avgWinPercent > 0) {
+        if (guide.avgWinPercent < guide.optimalTP * 0.5) {
+          insights.push({ type: 'warning', text: `Selling too early! Avg +${guide.avgWinPercent.toFixed(0)}% but could get +${guide.optimalTP.toFixed(0)}%` });
+        }
+      }
+      
+      if (guide.roundtripCount >= 2 && guide.avgRoundtripPeak > 0) {
+        insights.push({ type: 'warning', text: `${guide.roundtripCount} roundtrips! Take profit at +${(guide.avgRoundtripPeak * 0.7).toFixed(0)}%` });
+      }
+      
+      if (guide.dcaTrades >= 3) {
+        if (guide.dcaHelps) {
+          insights.push({ type: 'positive', text: `DCA working: ${guide.dcaWinRate.toFixed(0)}% win rate` });
+        } else {
+          insights.push({ type: 'negative', text: `DCA hurting: only ${guide.dcaWinRate.toFixed(0)}% wins vs ${guide.nonDcaWinRate.toFixed(0)}%` });
+        }
+      }
+    }
     
     const scalps = allTrades.filter(t => t.tradeType === 'scalp');
     const swings = allTrades.filter(t => t.tradeType === 'swing');
@@ -226,53 +348,6 @@ export default function App() {
     
     if (bestType && bestType.avg > 0) {
       insights.push({ type: 'positive', text: `Best at ${bestType.type}: +$${bestType.avg.toFixed(0)} avg` });
-    }
-    
-    const worstType = [
-      { type: 'scalping', avg: scalpAvgProfit, count: scalps.length },
-      { type: 'swing trading', avg: swingAvgProfit, count: swings.length },
-      { type: 'holding', avg: holdAvgProfit, count: holds.length }
-    ].filter(t => t.count >= 2).sort((a, b) => a.avg - b.avg)[0];
-    
-    if (worstType && worstType.avg < 0) {
-      insights.push({ type: 'negative', text: `Avoid ${worstType.type}: -$${Math.abs(worstType.avg).toFixed(0)} avg` });
-    }
-    
-    const dcaTrades = allTrades.filter(t => t.entries && t.entries.length > 1);
-    if (dcaTrades.length >= 2) {
-      const dcaAvgProfit = dcaTrades.reduce((sum, t) => sum + t.actualProfit, 0) / dcaTrades.length;
-      const singleEntryTrades = allTrades.filter(t => !t.entries || t.entries.length === 1);
-      const singleAvgProfit = singleEntryTrades.length > 0 ? singleEntryTrades.reduce((sum, t) => sum + t.actualProfit, 0) / singleEntryTrades.length : 0;
-      
-      if (dcaAvgProfit < singleAvgProfit - 50) {
-        insights.push({ type: 'warning', text: `DCA hurting you: -$${Math.abs(dcaAvgProfit - singleAvgProfit).toFixed(0)} vs single entry` });
-      } else if (dcaAvgProfit > singleAvgProfit + 50) {
-        insights.push({ type: 'positive', text: `DCA working: +$${(dcaAvgProfit - singleAvgProfit).toFixed(0)} vs single entry` });
-      }
-    }
-    
-    const tradesWithTime = allTrades.filter(t => t.holdTimeMins);
-    if (tradesWithTime.length >= 5) {
-      const winners = tradesWithTime.filter(t => t.actualProfit > 0);
-      const losers = tradesWithTime.filter(t => t.actualProfit < 0);
-      
-      const avgWinHold = winners.length > 0 ? winners.reduce((sum, t) => sum + t.holdTimeMins, 0) / winners.length : 0;
-      const avgLossHold = losers.length > 0 ? losers.reduce((sum, t) => sum + t.holdTimeMins, 0) / losers.length : 0;
-      
-      if (avgLossHold > avgWinHold * 1.5 && avgLossHold > 30) {
-        insights.push({ type: 'warning', text: `Holding losers too long: ${Math.floor(avgLossHold)}min vs ${Math.floor(avgWinHold)}min winners` });
-      }
-    }
-    
-    const emotionTrades = allTrades.filter(t => t.emotions);
-    if (emotionTrades.length >= 3) {
-      const fomoTrades = emotionTrades.filter(t => t.emotions.toLowerCase().includes('fomo'));
-      if (fomoTrades.length >= 2) {
-        const fomoWinRate = fomoTrades.filter(t => t.actualProfit > 0).length / fomoTrades.length * 100;
-        if (fomoWinRate < 40) {
-          insights.push({ type: 'warning', text: `FOMO trades: ${fomoWinRate.toFixed(0)}% win rate - slow down!` });
-        }
-      }
     }
     
     const recentTrades = allTrades.slice(-5);
@@ -307,7 +382,6 @@ export default function App() {
       ? ((effectiveHourlyRate / parseFloat(oldHourlySalary)) * 100 - 100).toFixed(1)
       : 0;
 
-    // Calculate daily rate projection
     const daysSinceStart = getDaysSinceStart();
     const dailyAvgProfit = totalProfit / daysSinceStart;
     const yearlyProjectionFromDaily = dailyAvgProfit * 365;
@@ -341,15 +415,13 @@ export default function App() {
     const winRate = (winners.length / allTrades.length) * 100;
     const profitFactor = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? Infinity : 0;
     
-    const avgWinPercent = winners.length > 0 ? winners.reduce((sum, t) => sum + t.actualProfitPercent, 0) / winners.length : 0;
-    const avgLossPercent = losers.length > 0 ? Math.abs(losers.reduce((sum, t) => sum + t.actualProfitPercent, 0) / losers.length) : 0;
+    const avgWinPercent = winners.length > 0 ? winners.reduce((sum, t) => sum + (t.actualProfitPercent || 0), 0) / winners.length : 0;
+    const avgLossPercent = losers.length > 0 ? Math.abs(losers.reduce((sum, t) => sum + (t.actualProfitPercent || 0), 0) / losers.length) : 0;
 
-    // Roundtrip stats
     const roundtrippedTrades = allTrades.filter(t => t.roundtripped);
     const totalRoundtripped = roundtrippedTrades.reduce((sum, t) => sum + Math.abs(t.actualProfit), 0);
     const roundtripCount = roundtrippedTrades.length;
 
-    // Missed profit stats
     const totalMissedProfit = allTrades.reduce((sum, t) => sum + (t.missedProfit || 0), 0);
     
     const avgPotentialProfitPercent = allTrades.reduce((sum, t) => sum + (t.potentialProfitPercent || 0), 0) / allTrades.length;
@@ -656,6 +728,92 @@ export default function App() {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
   };
 
+  const renderExecutionGuide = () => {
+    const guide = getExecutionGuide();
+    if (!guide) return null;
+
+    return (
+      <div className="bg-gradient-to-br from-blue-600 to-cyan-600 p-6 rounded-lg shadow-lg text-white mb-6">
+        <h2 className="text-xl font-semibold mb-4">🎯 Your Execution Guide</h2>
+        
+        {/* Take Profit & Stop Loss */}
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="bg-white bg-opacity-20 p-4 rounded-lg">
+            <div className="text-sm opacity-90">Take Profit At</div>
+            <div className="text-3xl font-bold text-green-300">+{guide.optimalTP.toFixed(0)}%</div>
+            <div className="text-xs opacity-80 mt-1">Based on roundtrip data</div>
+          </div>
+          <div className="bg-white bg-opacity-20 p-4 rounded-lg">
+            <div className="text-sm opacity-90">Stop Loss At</div>
+            <div className="text-3xl font-bold text-red-300">-{guide.recommendedStop.toFixed(0)}%</div>
+            <div className="text-xs opacity-80 mt-1">Cut losses early</div>
+          </div>
+        </div>
+
+        {/* Your Actual Averages */}
+        <div className="bg-white bg-opacity-10 p-4 rounded-lg mb-4">
+          <div className="text-sm font-semibold mb-2">📊 Your Actual Averages</div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="text-xs opacity-80">Avg Win</div>
+              <div className="text-xl font-bold text-green-300">+{guide.avgWinPercent.toFixed(1)}%</div>
+            </div>
+            <div>
+              <div className="text-xs opacity-80">Avg Loss</div>
+              <div className="text-xl font-bold text-red-300">-{guide.avgLossPercent.toFixed(1)}%</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Roundtrip Analysis */}
+        {guide.roundtripCount > 0 && (
+          <div className="bg-white bg-opacity-10 p-4 rounded-lg mb-4">
+            <div className="text-sm font-semibold mb-2">🔄 Roundtrip Analysis ({guide.roundtripCount} trades)</div>
+            <div className="text-sm">
+              Your roundtrips peaked at <span className="font-bold text-yellow-300">+{guide.avgRoundtripPeak.toFixed(0)}%</span> before dumping.
+              <br />
+              <span className="text-xs opacity-80">If you had sold at +{(guide.avgRoundtripPeak * 0.7).toFixed(0)}%, you would have kept profits.</span>
+            </div>
+          </div>
+        )}
+
+        {/* DCA Specific Guide */}
+        {guide.dcaTrades >= 2 && (
+          <div className="bg-white bg-opacity-10 p-4 rounded-lg">
+            <div className="text-sm font-semibold mb-2">📈 DCA Strategy ({guide.dcaTrades} trades)</div>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="text-xs opacity-80">DCA Win Rate</div>
+                <div className={`font-bold ${guide.dcaWinRate >= guide.nonDcaWinRate ? 'text-green-300' : 'text-red-300'}`}>
+                  {guide.dcaWinRate.toFixed(0)}%
+                </div>
+              </div>
+              <div>
+                <div className="text-xs opacity-80">Non-DCA Win Rate</div>
+                <div className="font-bold">{guide.nonDcaWinRate.toFixed(0)}%</div>
+              </div>
+              <div>
+                <div className="text-xs opacity-80">DCA Avg Win</div>
+                <div className="text-green-300">+{guide.dcaAvgWinPercent.toFixed(1)}%</div>
+              </div>
+              <div>
+                <div className="text-xs opacity-80">DCA Avg Loss</div>
+                <div className="text-red-300">-{guide.dcaAvgLossPercent.toFixed(1)}%</div>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-white border-opacity-20">
+              {guide.dcaHelps ? (
+                <div className="text-green-300 text-sm">✅ DCA is helping! Take profit at +{guide.dcaOptimalExit.toFixed(0)}% on DCA trades</div>
+              ) : (
+                <div className="text-red-300 text-sm">⚠️ DCA is hurting you. Consider smaller initial positions instead.</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderWithdrawalProgress = () => {
     const totalWithdrawn = getTotalWithdrawn();
     const yearlySalary = getYearlySalary();
@@ -847,6 +1005,9 @@ export default function App() {
           </div>
         </div>
 
+        {/* Execution Guide */}
+        {renderExecutionGuide()}
+
         {/* Export Button */}
         <div className="flex justify-end">
           <button 
@@ -960,12 +1121,12 @@ export default function App() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-green-50 p-4 rounded">
                   <div className="text-lg font-bold text-green-600">{stats.winners} Wins</div>
-                  <div className="text-sm text-gray-600">Avg: {formatCurrency(stats.avgWin)}</div>
+                  <div className="text-sm text-gray-600">Avg: {formatCurrency(stats.avgWin)} (+{stats.avgWinPercent.toFixed(1)}%)</div>
                   <div className="text-sm text-gray-600">Largest: {formatCurrency(stats.largestWin)}</div>
                 </div>
                 <div className="bg-red-50 p-4 rounded">
                   <div className="text-lg font-bold text-red-600">{stats.losers} Losses</div>
-                  <div className="text-sm text-gray-600">Avg: {formatCurrency(stats.avgLoss)}</div>
+                  <div className="text-sm text-gray-600">Avg: {formatCurrency(stats.avgLoss)} (-{stats.avgLossPercent.toFixed(1)}%)</div>
                   <div className="text-sm text-gray-600">Largest: {formatCurrency(Math.abs(stats.largestLoss))}</div>
                 </div>
               </div>
@@ -1316,7 +1477,7 @@ export default function App() {
                             <div className="text-xs text-gray-400 font-mono truncate mb-1">{trade.contractAddress}</div>
                           )}
                           
-                          {trade.roundtripped && <div className="text-xs text-red-600 font-semibold">🔄 ROUNDTRIP!</div>}
+                          {trade.roundtripped && <div className="text-xs text-red-600 font-semibold">🔄 ROUNDTRIP! (peaked at +{trade.potentialProfitPercent?.toFixed(0)}%)</div>}
                           {trade.savedByEarlyExit && <div className="text-xs text-green-600 font-semibold">✅ EARLY EXIT!</div>}
                           
                           <div className="text-xs text-gray-500 mt-1">
